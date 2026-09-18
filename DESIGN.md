@@ -314,11 +314,15 @@ a cache at the end. The interior grammar and its rendering were rebuilt; the ter
   Rationed: one gun position, one dormant one, one live plant and one array per world.
 - **Physics.** The floor drag inside passages applies only to what rests on a wall, so a rock on a cable
   flies free through the void; the leak safety net and the openings rule are unchanged.
-- **Measured (40 seeds).** Per cut world: 1.2 complexes, 5.8 chambers (0.7 halls), 4 passages of which
-  0.8 squeezes, 2.8 mouths; chamber radius median 13.4, quartiles 11.6 and 15.2; passage half width
-  median 7.6, minimum 3.3; 65 of 156 networks have a second way out; one validation problem in 80 worlds.
-  The follower flies every chamber of the biggest complex at 5, 7 and 9 units a second with no hull loss
-  on seed 2024 and 12 hull on one seed; no wall rescues in any tour. Frame time under 3 ms underground.
+- **Measured (120 seeds).** Per cut world: 1.1 complexes, 5.7 chambers (0.8 halls), 3.9 passages of which
+  0.6 squeezes, 2.7 mouths; chamber radius median 13.5, quartiles 11.8 and 15.7; passage half width
+  median 7.5, minimum 3.3; 197 of 451 networks have a second way out; no validation problem in 240
+  worlds and every world has a multi-chamber complex. The follower flies every chamber of the biggest
+  complex at 5, 7 and 9 units a second with no hull loss on seed 2024 and 12 hull on one seed; no wall
+  rescues in any tour. A gun position hits a ship hovering in its chamber for 90 in ten seconds; a
+  dormant one is silent. Twenty simulated minutes on three seeds with the director on: no rescues, no
+  blow-ups, every placed rock, cave pickup and interior sentinel still where it was. Frame time under
+  3 ms underground.
 - **Not done.** Live stranded shuttles under the ground (their AI cannot fly walls) are wreck pickups.
   The follower autopilot tows a small rock out of a complex on about half its tries and stalls on a
   size-two rock; a human test of towing is still needed. Only the home and inner worlds are cut.
