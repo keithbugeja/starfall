@@ -73,9 +73,9 @@ export function markOpenings(b: Body): void {
 }
 
 /** Safety net: a world point that is under the ground of a body with passages but in none of them is moved into the nearest passage. */
-export function rescueIntoWalls(b: Body, x: number, y: number, radius: number): V2 | null {
+export function rescueIntoWalls(b: Body, x: number, y: number, radius: number): (V2 & { into: string }) | null {
   const l = worldToBody(b, x, y);
-  let best: { d: number; px: number; py: number; nx: number; ny: number } | null = null;
+  let best: { d: number; px: number; py: number; nx: number; ny: number; f: Fissure } | null = null;
   for (const f of b.fissures) {
     const n = f.outline.length;
     for (let i = 0; i < n; i++) {
@@ -86,12 +86,13 @@ export function rescueIntoWalls(b: Body, x: number, y: number, radius: number): 
       t = t < 0 ? 0 : t > 1 ? 1 : t;
       const px = a.x + ex * t, py = a.y + ey * t;
       const d = Math.hypot(l.x - px, l.y - py);
-      if (!best || d < best.d) { const el = Math.sqrt(l2); best = { d, px, py, nx: -ey / el, ny: ex / el }; }
+      if (!best || d < best.d) { const el = Math.sqrt(l2); best = { d, px, py, nx: -ey / el, ny: ex / el, f }; }
     }
   }
-  if (!best) return null;
+  // only a nearby passage counts: something deep under the ground far from any passage is pushed out of the ground the ordinary way
+  if (!best || best.d > 12) return null;
   const lp = { x: best.px + best.nx * (radius + 0.1), y: best.py + best.ny * (radius + 0.1) };
-  return bodyToWorld(b, lp);
+  return { ...bodyToWorld(b, lp), into: best.f.name };
 }
 
 /** Local -> world for a point on a body (respects rotation). */

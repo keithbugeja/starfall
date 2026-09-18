@@ -917,6 +917,8 @@ const sliceScenarios = {
       for (const pad of g.pads) {
         await api.newGame(page, seed);
         await api.launch(page);
+        // the free hull in home orbit crosses the approach column on some seeds; park it far away for this test
+        await page.evaluate(() => { const w = window.__sf.game.world; const h = w.bodies.find(b => b.name === 'THE SLIPWAY'); if (h) { h.pos.x += 4000; h.pos.y += 4000; } });
         const G = (await page.evaluate(() => window.__sf.geo())).find(x => x.name === g.name);
         const q = G.pads.find(x => x.name === pad.name);
         const a = q.angle + G.spin;
@@ -980,8 +982,8 @@ const sliceScenarios = {
         await api.shot(page, `planet_${g0.role}_room`, 30);
       }
     }
-    const rescues = (await page.evaluate(() => window.__sf.log(0))).filter(e => e.kind === 'wall-rescue').length;
-    console.log('wall rescues during the tour:', rescues);
+    const rescues = (await page.evaluate(() => window.__sf.log(0))).filter(e => e.kind === 'wall-rescue');
+    console.log('wall rescues during the tour:', rescues.length, rescues.map(r => `${r.t}s ${r.text}`).join(', '));
   },
 
   async cut({ page }) {

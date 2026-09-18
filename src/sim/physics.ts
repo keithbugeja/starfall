@@ -231,7 +231,7 @@ function resolveTerrain(w: World, s: Ship, dt: number): void {
     if (b.fissures.length && pen > 3) {
       // deep under the ground of a cut world but in no passage: a leak; put the ship back in the nearest passage
       const back = rescueIntoWalls(b, s.pos.x, s.pos.y, s.radius * 0.72);
-      if (back) { const sv = surfaceVelocity(b, back.x, back.y); s.pos.x = back.x; s.pos.y = back.y; s.vel.x = sv.x; s.vel.y = sv.y; w.log.push({ time: w.time, kind: 'wall-rescue', text: b.name, x: back.x, y: back.y }); continue; }
+      if (back) { const sv = surfaceVelocity(b, back.x, back.y); s.pos.x = back.x; s.pos.y = back.y; s.vel.x = sv.x; s.vel.y = sv.y; w.log.push({ time: w.time, kind: 'wall-rescue', text: `${b.name}|${back.into}`, x: back.x, y: back.y }); continue; }
     }
     if (b.kind === 'gas') {
       // gas giant atmosphere: no solid surface, but crushing pressure deeper in

@@ -261,15 +261,19 @@ revoked for the ground itself; what is where at system scale is still authored.
   taller than 9% of R within nine units of a pad, no mouth under a pad; nothing embedded in ground or
   wall; no rock in a mouth. Mouths keep clear of pads, other mouths, shallow passages and surface content.
   Sixty seeds: zero problems. A safety net remains: a ship, rock or pickup found deep under the ground of
-  a cut world but in no passage is moved into the nearest one and logged (`wall-rescue`); the soak saw
-  one such event in sixty simulated minutes, the cave tours one per world at most.
+  a body with passages but in no passage, within twelve units of one, is moved into it and logged
+  (`wall-rescue`, with the passage's name). Five seeds soaked for twenty minutes each with the director
+  on: no rescues on the cut worlds (one seed showed four at the Cut before the twelve-unit limit, none
+  after). The autopilot cave tours trip it about once per tour at a junction or an overhang bend: a
+  hitch, not a fall through the floor, and the log says where.
 - **Measured.** Per cut world: about thirteen motifs, five pads (two colonies or one, a mine, and one to
   five of settlement, depot, works, hidden derelict), three to four mouths, five passages, five rooms,
   and eight to twenty placed things. The follower autopilot flies the main passage of the biggest cave on
-  every seed tried (seven of seven networks). Frame time 2 to 6 ms with the cut worlds on screen. Twenty
-  simulated minutes with the director on: no blow-ups, placed rocks and cave pickups all still in place;
-  civilian losses 20 to 33 per twenty minutes, a third of them terrain, which is up from before and is
-  the known cost of rougher ground near pads.
+  every seed tried (nine of nine networks over five seeds). Every pad on the cut worlds is landable from
+  forty units up (28 of 28 over three seeds). Frame time 2 to 6 ms with the cut worlds on screen. Twenty
+  simulated minutes per seed with the director on, five seeds: no blow-ups, placed rocks and cave pickups
+  all still in place; civilian losses 22 to 26 per twenty minutes, about a third of them ground impacts
+  and collisions, which is the known cost of rougher ground near pads.
 - **Not done.** Only the home and inner worlds are cut; the catalogue has weights for the mid and enemy
   worlds (gun sockets on crests, excavations) but they are not applied. No procedural quests: recorders
   say what the place was, never what to do. Rock aiming is still unsolved. The old landing autopilot in
