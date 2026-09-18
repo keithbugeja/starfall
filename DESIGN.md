@@ -229,6 +229,53 @@ The map is fixed; the practical map moves with light, heat, emissions and what t
   machinery above 500 units of impact energy (a ram, not a bump). Civilians, reavers and hunters detour
   around worlds and the star.
 
+## Worlds as levels (procedural planets pass)
+Human play found ordinary planets empty: a refuelling stop, not a place. The fixed-geography rule was
+revoked for the ground itself; what is where at system scale is still authored.
+- **The profile is a level.** The home and inner worlds are cut at about five units per facet (two ship
+  lengths; 88 to 120 segments) instead of ten, so ridges, craters and canyons read at flying scale. A pad
+  now flattens as many segments as its width needs (`Pad.segCount`) and its collision, colour and label
+  cover the whole run.
+- **Motifs with sockets.** `src/gen/planet.ts` lays motifs along the circumference from a per-role catalogue
+  with caps: valleys, ridges, craters (floor and rims, like the Kiln's), canyons, shelves, excavations
+  (stepped industrial cuts), fissures, shaft heads, tunnels under a ridge, overhangs. Each motif offers
+  sockets with a preference list (a crater floor wants a colony, a wreck field or an old plant; a canyon
+  floor a mine, a hidden pad or a cave mouth; a crest a dead mast or a beacon; a shelf a settlement or a
+  depot). The authored colonies and mines take sockets first; the dressing spends a per-role budget on the
+  rest. Home: inhabited and industrial (settlements, works, depots, machinery, wreck fields, an old plant
+  still keeping a core). Inner: thermal (depots and caches in the shade, a plant behind a rim, cooked
+  hulls, more ridges and overhangs, no settlements).
+- **Caves are the Cut's geometry generalised.** A passage is a polygon in the body's local frame; passages
+  overlap, and where they do, the shared stretches of outline are openings, not walls: every outline is
+  split where another outline crosses it, then an edge whose midpoint (nudged either way) lies inside
+  another passage is open. Every wall query (ships, shots, rocks, pickups, landing guidance) now looks at
+  every passage the point is in. The grammar: an entry from a mouth, a walk with bends that stays under
+  the ground and away from pads, chambers, junctions, branches, and a branch that climbs out again
+  through a second mouth when a clean one exists; shafts straight down to a gallery, some with walls
+  that shed rubble when shot; tunnels open at both ends; overhangs as shallow side shelters. Rooms take a
+  buried plant with a core in its socket, caches of cells and salvage, stranded hulls, rubble, ore
+  pockets or recorders; every hole holds at least a fuel cell. Under the ground is shade at any hour.
+- **Validation, not hope.** `validatePlanet` runs in the 120-seed test and the harness (`__sf.geo()`):
+  outlines simple; every open edge leads into another passage or out of the ground; every passage
+  reachable from a mouth; no wall breaks the surface away from a mouth; no pad in a passage, no wall
+  taller than 9% of R within nine units of a pad, no mouth under a pad; nothing embedded in ground or
+  wall; no rock in a mouth. Mouths keep clear of pads, other mouths, shallow passages and surface content.
+  Sixty seeds: zero problems. A safety net remains: a ship, rock or pickup found deep under the ground of
+  a cut world but in no passage is moved into the nearest one and logged (`wall-rescue`); the soak saw
+  one such event in sixty simulated minutes, the cave tours one per world at most.
+- **Measured.** Per cut world: about thirteen motifs, five pads (two colonies or one, a mine, and one to
+  five of settlement, depot, works, hidden derelict), three to four mouths, five passages, five rooms,
+  and eight to twenty placed things. The follower autopilot flies the main passage of the biggest cave on
+  every seed tried (seven of seven networks). Frame time 2 to 6 ms with the cut worlds on screen. Twenty
+  simulated minutes with the director on: no blow-ups, placed rocks and cave pickups all still in place;
+  civilian losses 20 to 33 per twenty minutes, a third of them terrain, which is up from before and is
+  the known cost of rougher ground near pads.
+- **Not done.** Only the home and inner worlds are cut; the catalogue has weights for the mid and enemy
+  worlds (gun sockets on crests, excavations) but they are not applied. No procedural quests: recorders
+  say what the place was, never what to do. Rock aiming is still unsolved. The old landing autopilot in
+  the playtest driver dies to the harbour ring and freighters on the way out, so `padcheck` (approach
+  from forty units up) is the pad test, not `land`.
+
 ## Rendering
 WebGL2, no textures, no external art. Instanced flat-shaded meshes with four-band quantised
 lighting from the star plus a faint camera fill. Lines are screen-space expanded quads with a

@@ -21,7 +21,7 @@ import { stepWorld } from '../sim/step';
 import { attach, release, tetherEnd, TETHER_BREAK } from '../sim/tether';
 import { emitPing, PING_COOLDOWN } from '../sim/ping';
 import { tideGlow } from '../sim/slices';
-import { bodyToWorld } from '../sim/walls';
+import { bodyToWorld, edgeOpen } from '../sim/walls';
 import { undock } from '../sim/stations';
 import { applyUpgrades } from '../sim/upgrades';
 import { comm, sfx, SIM_DT, type Ship, type ShipKind, type World } from '../sim/world';
@@ -630,7 +630,7 @@ export class Game {
         const n = f.outline.length;
         const flash = clamp((f.flashUntil - w.time) / 2.6, 0, 1);
         for (let i = 0; i < n; i++) {
-          if (i === f.openEdge) continue;
+          if (edgeOpen(f, i)) continue;
           const a = f.outline[i], c = f.outline[(i + 1) % n];
           const wa = bodyToWorld(b, a), wc = bodyToWorld(b, c);
           const ha = b.oblate * Math.sqrt(Math.max(0, b.radius * b.radius - (a.x * a.x + a.y * a.y))) + 0.5;
@@ -651,8 +651,8 @@ export class Game {
       for (const pad of b.pads) {
         const col = padColor(pad.kind, pad.alive);
         const seg = b.segments;
-        const a0 = (pad.segIndex / seg) * TAU + rotOff, a1 = ((pad.segIndex + 1) / seg) * TAU + rotOff;
-        const r0 = b.terrain[pad.segIndex], r1 = b.terrain[(pad.segIndex + 1) % seg];
+        const a0 = (pad.segIndex / seg) * TAU + rotOff, a1 = ((pad.segIndex + pad.segCount) / seg) * TAU + rotOff;
+        const r0 = b.terrain[pad.segIndex], r1 = b.terrain[(pad.segIndex + pad.segCount) % seg];
         const x0 = b.pos.x + Math.cos(a0) * r0, y0 = b.pos.y + Math.sin(a0) * r0;
         const x1 = b.pos.x + Math.cos(a1) * r1, y1 = b.pos.y + Math.sin(a1) * r1;
         const blink = 0.55 + 0.45 * Math.sin(w.time * 3 + pad.id);

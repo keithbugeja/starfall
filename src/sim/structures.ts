@@ -49,6 +49,17 @@ export function addStructure(w: World, body: Body, kind: StructureKind, localAng
   return s;
 }
 
+/** Place a structure at an explicit local position with an explicit local normal (machinery inside a passage). */
+export function addStructureAt(w: World, body: Body, kind: StructureKind, local: V2, normalLocal: V2, pad: Pad | null, name: string): Structure {
+  const spec = SPEC[kind];
+  const s: Structure = {
+    id: w.nextId++, kind, name, body, local: { x: local.x, y: local.y }, normalLocal: { x: normalLocal.x, y: normalLocal.y },
+    radius: spec.radius, integrity: spec.integrity, integrityMax: spec.integrity, armour: spec.armour, alive: true, pad, hot: 0, hitFlash: -1e9,
+  };
+  w.structures.push(s);
+  return s;
+}
+
 export function structurePos(s: Structure): V2 { return bodyToWorld(s.body, s.local); }
 export function structureNormal(s: Structure): V2 { return s.body.rotates ? rotateVec(s.normalLocal, s.body.spinAngle) : s.normalLocal; }
 

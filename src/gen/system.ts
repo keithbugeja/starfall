@@ -1,6 +1,6 @@
 // Star system generation. One dense, designed system per seed: a star, a handful of distinct worlds,
 // moons, belts, three stations, colonies and mines to protect, derelicts to find, and an enemy foothold.
-import { Rng, TAU } from '../engine/math';
+import { clamp, Rng, TAU } from '../engine/math';
 import { addPad, createBody, makeBodyRng, resetBodyIds, type Body, type Pad, type PlanetType } from '../sim/bodies';
 import { authorKiln, equipBase } from '../sim/installations';
 import { createAsteroid, spawnPickup } from '../sim/physics';
@@ -11,6 +11,8 @@ import { createEmptyWorld, createShip, type World } from '../sim/world';
 import { makeNamer } from './names';
 import { spawnAiShip } from '../sim/ai';
 import { authorSlices } from '../sim/slices';
+import { markOpenings } from '../sim/walls';
+import { dressPlanet, GEOGRAPHY, padAngleFor, PLACED_ROCK, sculptPlanet, type Geography } from './planet';
 
 const PALETTES: Record<string, { low: number[]; mid: number[]; high: number[] }> = {
   rock: { low: [0.36, 0.28, 0.24], mid: [0.58, 0.48, 0.38], high: [0.74, 0.7, 0.64] },
@@ -48,6 +50,7 @@ export function generateSystem(seed: number, seedName: string): World {
   // ---------------- planets: five worlds in fixed roles. Their rails obey the star's weak far field, so
   // free things (rocks, pods, hulls) keep station with them; the star's deep near well ends at 3.5 radii.
   const plans: PlanetPlan[] = [];
+  const geos = new Map<string, Geography>();
   const roles: PlanetPlan['role'][] = ['inner', 'home', 'mid', 'gas', 'enemy'];
   const orbits = [1050, 1900, 2800, 4200, 5700].map(r => Math.round(r * (0.98 + rng.next() * 0.04)));
   const homeOrbit = orbits[1];
@@ -65,8 +68,11 @@ export function generateSystem(seed: number, seedName: string): World {
       case 'gas': type = 'gas'; radius = 160 + rng.int(30); g = 9 + rng.next() * 2; rough = 0; pal = rng.pick([PALETTES.gas, PALETTES.gas2, PALETTES.gas3]); break;
       default: type = 'ice'; radius = 78 + rng.int(18); g = 4.8 + rng.next() * 1.2; rough = 0.13; pal = PALETTES.ice; break;
     }
-    const body = createBody({ name: names.world(), kind: type === 'gas' ? 'gas' : 'planet', type, radius, surfaceG: g, roughness: rough, orbit: { parent: star, radius: orbit, period: kepler(orbit), phase }, palette: pal, seed: seed + 101 * (i + 1), landable: type !== 'gas', soiMul: type === 'gas' ? 5.5 : 5 });
+    // the home and inner worlds are cut finely: their profiles are levels, not backdrops
+    const cut = role === 'home' || role === 'inner';
+    const body = createBody({ name: names.world(), kind: type === 'gas' ? 'gas' : 'planet', type, radius, surfaceG: g, roughness: rough, orbit: { parent: star, radius: orbit, period: kepler(orbit), phase }, palette: pal, seed: seed + 101 * (i + 1), landable: type !== 'gas', soiMul: type === 'gas' ? 5.5 : 5, segments: cut ? clamp(Math.round(TAU * radius / 5.2), 64, 160) : undefined });
     if (type !== 'gas') { const br = makeBodyRng(seed, 31 + i); body.rotates = true; body.spin = br.sign() * (0.005 + br.next() * 0.005); }
+    if (cut) geos.set(role, sculptPlanet(body, role, seed));
     w.bodies.push(body);
     const plan: PlanetPlan = { body, role, moons: [] };
     plans.push(plan);
@@ -131,10 +137,12 @@ export function generateSystem(seed: number, seedName: string): World {
     p.stock = 2 + rng.int(4); p.fuel = true;
     return p;
   };
-  // home world: two colonies and a mine; a mine on its moon
+  // home world: two colonies and a mine, each where the ground asks for it (a crater floor, a valley, a canyon); a mine on its moon
   {
-    const a = spreadAngles(3, rng);
-    colony(home.body, a[0]); colony(home.body, a[1]); mine(home.body, a[2]);
+    const g = geos.get('home')!;
+    colony(home.body, padAngleFor(g, ['colony', 'settlement'], 5));
+    colony(home.body, padAngleFor(g, ['colony', 'settlement'], 5));
+    mine(home.body, padAngleFor(g, ['mine', 'works'], 4));
     for (const m of home.moons) mine(m, rng.next() * TAU);
   }
   // mid world: colony + mine; THE KILN goes in beside the colony later
@@ -144,10 +152,12 @@ export function generateSystem(seed: number, seedName: string): World {
   }
   // inner world: a hardy colony and a mine in the heat
   {
-    const a = spreadAngles(2, rng);
-    colony(inner.body, a[0]).population = 4 + rng.int(3);
-    mine(inner.body, a[1]).stock = 5;
+    const g = geos.get('inner')!;
+    colony(inner.body, padAngleFor(g, ['colony'], 5)).population = 4 + rng.int(3);
+    mine(inner.body, padAngleFor(g, ['mine', 'works'], 4)).stock = 5;
   }
+  // the rest of what those two worlds hold: settlements, works, wreck fields, old plants, and the ground under them
+  for (const role of ['home', 'inner']) { const g = geos.get(role)!; dressPlanet(w, g, names); GEOGRAPHY.set(g.body, g); }
   // gas giant moons: mine + derelict
   mine(gas.moons[0], rng.next() * TAU).stock = 4;
   { const d = addPad(gas.moons[1], 'derelict', names.derelict(), rng.next() * TAU, 4); d.stock = 1; }
@@ -301,7 +311,7 @@ export function generateSystem(seed: number, seedName: string): World {
     ast.rich = rng.chance(0.6);
   }
   // nothing starts inside a body, and belt rocks born inside a world's well (they would fall within seconds) are culled
-  w.asteroids = w.asteroids.filter(a => w.bodies.every(b => Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.maxRadius + a.radius + 3));
+  w.asteroids = w.asteroids.filter(a => a.field === PLACED_ROCK || w.bodies.every(b => Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.maxRadius + a.radius + 3));
   w.asteroids = w.asteroids.filter(a => a.field !== 1 || w.bodies.every(b => b.kind === 'star' || Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.soi * 0.8));
   // unique module orbiting the Fault
   {
@@ -328,8 +338,9 @@ export function generateSystem(seed: number, seedName: string): World {
 
   // ---------------- hand-authored experiences
   authorSlices(w);
+  for (const b of w.bodies) if (b.fissures.length) markOpenings(b);
   // the hollow rock sits in the belt: nothing starts inside it either
-  w.asteroids = w.asteroids.filter(a => w.bodies.every(b => Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.maxRadius + a.radius + 3));
+  w.asteroids = w.asteroids.filter(a => a.field === PLACED_ROCK || w.bodies.every(b => Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.maxRadius + a.radius + 3));
 
   // ---------------- player: docked at the harbour
   const player = createShip(w, 'kestrel', 'player', harbour.pos.x, harbour.pos.y, 0);

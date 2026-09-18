@@ -15,7 +15,8 @@ export interface Pad {
   kind: PadKind;
   name: string;
   angle: number;       // centre angle on the equator (sim plane)
-  segIndex: number;    // terrain segment index the pad occupies
+  segIndex: number;    // first terrain segment the pad occupies
+  segCount: number;    // segments flattened under the pad (finely cut worlds need several for one pad)
   height: number;      // surface radius at the pad
   halfWidth: number;   // half length of the pad in world units
   // gameplay state
@@ -208,24 +209,27 @@ export function surfaceRadius(b: Body, lon: number, lat: number): number {
 /** Carve a pad into the terrain profile at the given angle. Returns the pad. */
 export function addPad(b: Body, kind: PadKind, name: string, angle: number, halfWidth: number): Pad {
   const seg = b.segments;
-  // snap pad centre to the middle of the nearest terrain segment so the pad is one flat chord
-  const idx = Math.floor(((angle / TAU) * seg + 1e-6 + seg) % seg);
-  const centre = ((idx + 0.5) / seg) * TAU;
-  const i0 = idx, i1 = (idx + 1) % seg;
-  // pad height: average of the two endpoints but not lower than 0.9R
-  const h = Math.max(b.radius * 0.9, (b.terrain[i0] + b.terrain[i1]) * 0.5);
+  // enough whole segments to span the pad's width, snapped so the pad is a run of flat chords
+  const arc = (TAU / seg) * b.radius;
+  const count = Math.max(1, Math.round((halfWidth * 2) / arc));
+  const idx = Math.floor((((angle / TAU) * seg - count / 2 + 0.5) + 1e-6 + seg * 4) % seg);
+  const centre = ((idx + count / 2) / seg) * TAU;
+  const i0 = idx;
+  // pad height: the mean of the vertices it covers, but never in a hole deeper than 14% of R
+  let h = 0;
+  for (let k = 0; k <= count; k++) h += b.terrain[(i0 + k) % seg];
+  h = Math.max(b.radius * 0.86, h / (count + 1));
   const pad: Pad = {
-    id: nextPadId++, body: b, kind, name, angle: centre, segIndex: idx, height: h, halfWidth,
+    id: nextPadId++, body: b, kind, name, angle: centre, segIndex: idx, segCount: count, height: h, halfWidth,
     alive: true, population: 0, stock: 0, fuel: false, repair: false, visited: false, lastRaid: -1e9,
     enemyHealth: 0, spawnTimer: 0, discovered: false, integrity: 100,
     guns: 1, plant: null, radiator: null, mast: null,
   };
   b.pads.push(pad);
-  b.terrain[i0] = h;
-  b.terrain[i1] = h;
+  for (let k = 0; k <= count; k++) b.terrain[(i0 + k) % seg] = h;
   // keep the neighbours approachable: no cliff taller than 8% of R right beside the pad
   const maxN = h + b.radius * 0.08;
-  const im = (i0 - 1 + seg) % seg, ip = (i1 + 1) % seg;
+  const im = (i0 - 1 + seg) % seg, ip = (i0 + count + 1) % seg;
   if (b.terrain[im] > maxN) b.terrain[im] = maxN;
   if (b.terrain[ip] > maxN) b.terrain[ip] = maxN;
   recomputeMaxRadius(b);
@@ -234,6 +238,13 @@ export function addPad(b: Body, kind: PadKind, name: string, angle: number, half
 
 /** Convert a world-frame angle about the body's centre to the body's local frame. */
 export function bodyLocalAngle(b: Body, worldAngle: number): number { return b.rotates ? worldAngle - b.spinAngle : worldAngle; }
+
+/** Does a terrain segment index lie under the pad? */
+export function padCoversSegment(p: Pad, seg: number): boolean {
+  const n = p.body.segments;
+  const d = ((seg - p.segIndex) % n + n) % n;
+  return d < p.segCount;
+}
 
 /** World-frame angle of a pad's centre. */
 export function padWorldAngle(p: Pad): number { return p.body.rotates ? p.angle + p.body.spinAngle : p.angle; }

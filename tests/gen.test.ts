@@ -2,11 +2,13 @@
 // stations sit clear of bodies, moons clear their parents, and the sim runs without NaNs.
 import { describe, expect, it } from 'vitest';
 import { generateSystem } from '../src/gen/system';
-import { maxTerrainRadius, terrainRadiusAt } from '../src/sim/bodies';
+import { maxTerrainRadius, padCoversSegment, terrainRadiusAt } from '../src/sim/bodies';
 import { emptyControls } from '../src/engine/input';
 import { stepWorld } from '../src/sim/step';
 import { SIM_DT } from '../src/sim/world';
 import { hashString } from '../src/engine/math';
+import { GEOGRAPHY, PLACED_ROCK, validatePlanet } from '../src/gen/planet';
+import { fissureAt } from '../src/sim/walls';
 
 const SEEDS = Array.from({ length: 120 }, (_, i) => hashString('seed-' + i));
 
@@ -19,8 +21,10 @@ describe('system generation', () => {
     expect(a.stations.map(s => s.pos.x)).toEqual(b.stations.map(s => s.pos.x));
   });
 
-  it('produces a sane system for every seed', () => {
+  it('produces a sane system for every seed', async () => {
+    let k = 0;
     for (const seed of SEEDS) {
+      if (++k % 10 === 0) await new Promise(r => setTimeout(r, 0));
       const w = generateSystem(seed, String(seed));
       expect(w.bodies.length).toBeGreaterThan(5);
       expect(w.stations.length).toBe(3);
@@ -53,12 +57,12 @@ describe('system generation', () => {
       for (const b of w.bodies) {
         for (const p of b.pads) {
           const seg = b.segments;
-          const i0 = p.segIndex, i1 = (i0 + 1) % seg;
-          expect(Math.abs(b.terrain[i0] - b.terrain[i1])).toBeLessThan(1e-6);
-          expect(p.height).toBeGreaterThan(b.radius * 0.85);
+          const i0 = p.segIndex;
+          for (let k = 0; k <= p.segCount; k++) expect(Math.abs(b.terrain[i0] - b.terrain[(i0 + k) % seg])).toBeLessThan(1e-6);
+          expect(p.height).toBeGreaterThan(b.radius * 0.82);
           for (const q of b.pads) {
             if (q === p) continue;
-            expect(q.segIndex).not.toBe(p.segIndex);
+            for (let k = 0; k < p.segCount; k++) expect(padCoversSegment(q, (i0 + k) % seg)).toBe(false);
           }
         }
       }
@@ -95,18 +99,33 @@ describe('system generation', () => {
       expect(w.bodies.filter(b => b.kind === 'planet' && b.name !== 'THE FAULT' && b.name !== 'HOLLOW').length + w.bodies.filter(b => b.kind === 'gas').length).toBe(5);
       // the star's rails: every planet's period follows the far field
       for (const b of w.bodies) if (b.orbit && b.orbit.parent === w.star && b.kind !== 'hull') expect(Math.abs(b.orbit.angularSpeed - Math.sqrt(w.star.farMass / (b.orbit.radius ** 3)))).toBeLessThan(1e-9);
-      // structures stand on the surface, outside every pad's flat chord
+      // structures stand on the surface (or on a wall under it), outside every pad's flat chord
       for (const st of w.structures) {
         const b = st.body;
         const r = Math.hypot(st.local.x, st.local.y);
         const ang = Math.atan2(st.local.y, st.local.x);
+        if (b.fissures.length && fissureAt(b, b.pos.x + st.local.x, b.pos.y + st.local.y)) continue;
         expect(Math.abs(r - terrainRadiusAt(b, ang))).toBeLessThan(st.radius + 0.5);
         for (const pd of b.pads) expect(Math.abs(Math.atan2(Math.sin(ang - pd.angle), Math.cos(ang - pd.angle))) * b.radius).toBeGreaterThan(pd.halfWidth + 1);
       }
       // worlds turn
       for (const b of w.bodies) if (b.kind === 'planet' && b.name !== 'THE FAULT' && b.name !== 'HOLLOW') { expect(b.rotates).toBe(true); expect(Math.abs(b.spin)).toBeGreaterThan(0.004); }
+      // the cut worlds are physically sound: passages reachable and sealed, pads approachable, nothing embedded
+      for (const b of w.bodies) {
+        if (!b.fissures.length && !GEOGRAPHY.has(b)) continue;
+        const problems = validatePlanet(w, b);
+        expect(problems, `${b.name} (seed ${seed}): ${problems.join('; ')}`).toEqual([]);
+      }
+      for (const role of ['home', 'inner']) {
+        const g = [...w.bodies].map(b => GEOGRAPHY.get(b)).find(x => x && x.role === role)!;
+        expect(g).toBeTruthy();
+        expect(g.motifs.length).toBeGreaterThan(6);
+        expect(g.networks.length).toBeGreaterThanOrEqual(1);
+        expect(g.placed.length).toBeGreaterThanOrEqual(3);
+      }
       // asteroids start outside bodies
       for (const a of w.asteroids) {
+        if (a.field === PLACED_ROCK) continue;
         for (const b of w.bodies) {
           const d = Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y);
           expect(d).toBeGreaterThan(b.kind === 'star' ? b.radius : terrainRadiusAt(b, Math.atan2(a.pos.y - b.pos.y, a.pos.x - b.pos.x)));

@@ -56,7 +56,7 @@ const LANDER_SRC = `
   const w = sf.game.world, p = w.player;
   const b = w.bodies.find(b => b.name === bodyName);
   const pad = b.pads.find(q => q.name === padName);
-  const log = [];
+  const log = [], hits = [];
   const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
   for (let t = 0; t < ticks; t++) {
     if (!p.alive || p.landed) break;
@@ -102,11 +102,21 @@ const LANDER_SRC = `
     if (Math.abs(hErr) < 0.35 && am > 0.3) c.thrust = Math.min(1, am / p.stats.thrust);
     if (alt < 6 && Math.abs(arc) < 4) { const up = wrap(Math.atan2(uy, ux) - p.angle); c.turn = Math.max(-1, Math.min(1, up * 3)); }
     sf.controls(c);
+    const hullBefore = p.hull;
     sf.step(1);
+    if (p.hull < hullBefore - 0.01) {
+      const near = [];
+      for (const k of w.pickups) if (k.alive) near.push(['pickup ' + k.kind + ' ' + k.name, Math.hypot(k.pos.x - p.pos.x, k.pos.y - p.pos.y)]);
+      for (const a of w.asteroids) if (a.alive) near.push(['rock ' + a.size + ' f' + a.field, Math.hypot(a.pos.x - p.pos.x, a.pos.y - p.pos.y)]);
+      for (const s of w.ships) if (s !== p && s.alive) near.push(['ship ' + s.kind + ' ' + s.faction, Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y)]);
+      for (const st of w.structures) if (st.alive) { const c2 = Math.cos(st.body.spinAngle), s2 = Math.sin(st.body.spinAngle); const x = st.body.pos.x + st.local.x * c2 - st.local.y * s2, y = st.body.pos.y + st.local.x * s2 + st.local.y * c2; near.push(['structure ' + st.name, Math.hypot(x - p.pos.x, y - p.pos.y)]); }
+      near.sort((u, v) => u[1] - v[1]);
+      hits.push({ t: (t / 120).toFixed(1), alt: alt.toFixed(1), arc: arc.toFixed(1), dmg: (hullBefore - p.hull).toFixed(0), src: p.lastDamageSource, near: near.slice(0, 2).map(n => n[0] + ' ' + n[1].toFixed(1)).join(' | ') });
+    }
     if (t % 120 === 0) log.push({ t: (t / 120).toFixed(1), alt: alt.toFixed(1), arc: arc.toFixed(1), vr: vr.toFixed(2), vt: vt.toFixed(2), hErr: hErr.toFixed(2), hull: p.hull.toFixed(0), fuel: p.fuel.toFixed(0) });
   }
   sf.controls(null);
-  return { log, landed: p.landed ? { pad: p.landed.pad && p.landed.pad.name, body: p.landed.body.name } : null, hull: p.hull, alive: p.alive, crashSpeed: p.crashSpeed, fuel: p.fuel };
+  return { log, hits, landed: p.landed ? { pad: p.landed.pad && p.landed.pad.name, body: p.landed.body.name } : null, hull: p.hull, alive: p.alive, crashSpeed: p.crashSpeed, fuel: p.fuel };
 `;
 
 async function autoLand(page, bodyName, padName, seconds) {
@@ -161,7 +171,8 @@ const scenarios = {
       const res = await autoLand(page, target.body, target.pad, 90);
       const st2 = await api.state(page);
       console.log(target.body, '/', target.pad, '=>', res.landed ? 'LANDED on ' + res.landed.pad : (res.alive ? 'NOT LANDED' : 'DEAD'), 'hull', res.hull.toFixed(0), 'fuel', res.fuel.toFixed(0), 'touch', res.crashSpeed.toFixed(2), 'lastDamage', st2.player.lastDamageSource);
-      if (!res.landed) console.log(res.log.slice(-6));
+      if (!res.landed) console.log(res.log.slice(-3));
+      if (res.hits && res.hits.length) console.log('   hits:', res.hits.slice(0, 6).map(h => `${h.t}s alt${h.alt} arc${h.arc} -${h.dmg} ${h.src} [${h.near}]`).join(' || '));
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r())));
       await api.shot(page, 'land_' + target.pad.replace(/\s+/g, '_'));
     }
@@ -850,6 +861,127 @@ const sliceScenarios = {
     console.log('5. station spin:', spin0.toFixed(3), '->', tor.spin.toFixed(3), 'latched', okS, sl.tether && sl.tether.kind, 'peak', tor.peak.toFixed(0), 'tethered', tor.tethered, 'hull', tor.hull.toFixed(0));
     console.log('   ', tor.log.map(l => `${l.t}s spin=${l.spin} T=${l.tension} ext=${l.stretch} v=${l.spd}`).join(' | '));
     await api.shot(page, 'tether_station', 10);
+  },
+
+  async launchcheck({ page }) {
+    // what does the ship hit in the first seconds after launch?
+    await api.manual(page, true);
+    const seed = Number(process.env.PLANET_SEED ?? 12345);
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const out = await page.evaluate(() => {
+      const sf = window.__sf, w = sf.game.world, p = w.player;
+      const log = [];
+      let last = p.hull;
+      for (let t = 0; t < 120 * 12; t++) {
+        sf.step(1);
+        if (p.hull < last - 0.01) {
+          const near = [];
+          for (const k of w.pickups) if (k.alive) near.push({ what: 'pickup ' + k.kind + ' ' + k.name + ' m' + k.mass, d: Math.hypot(k.pos.x - p.pos.x, k.pos.y - p.pos.y) });
+          for (const a of w.asteroids) if (a.alive) near.push({ what: 'rock ' + a.size + ' f' + a.field, d: Math.hypot(a.pos.x - p.pos.x, a.pos.y - p.pos.y) });
+          for (const s of w.ships) if (s !== p && s.alive) near.push({ what: 'ship ' + s.kind, d: Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y) });
+          for (const st of w.stations) near.push({ what: 'station ' + st.name, d: Math.hypot(st.pos.x - p.pos.x, st.pos.y - p.pos.y) });
+          for (const b of w.bodies) near.push({ what: 'body ' + b.name, d: Math.hypot(b.pos.x - p.pos.x, b.pos.y - p.pos.y) - b.maxRadius });
+          near.sort((a, b) => a.d - b.d);
+          log.push({ t: (t / 120).toFixed(2), hull: p.hull.toFixed(0), src: p.lastDamageSource, spd: Math.hypot(p.vel.x, p.vel.y).toFixed(1), near: near.slice(0, 3).map(n => n.what + ' ' + n.d.toFixed(1)) });
+          last = p.hull;
+          if (!p.alive) break;
+        }
+      }
+      return { log, alive: p.alive, hull: p.hull, pos: { x: p.pos.x, y: p.pos.y } };
+    });
+    console.log(JSON.stringify(out, null, 1));
+  },
+
+  async landone({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, Number(process.env.PLANET_SEED ?? 12345));
+    await api.launch(page);
+    const st = await api.state(page);
+    const body = process.env.LAND_BODY ?? st.bodies[2].name;
+    const pad = process.env.LAND_PAD ?? st.bodies.find(b => b.name === body).pads[0].name;
+    const res = await autoLand(page, body, pad, 90);
+    console.log(body, '/', pad, '=>', res.landed ? 'LANDED' : res.alive ? 'NOT LANDED' : 'DEAD', 'hull', res.hull.toFixed(0), 'hits', res.hits.length);
+    console.log(JSON.stringify(res.log.slice(0, 12)));
+    console.log(JSON.stringify(res.hits.slice(0, 8)));
+  },
+
+  async padcheck({ page }) {
+    // every pad on the cut worlds, approached from forty units up with the body's velocity: is it landable?
+    await api.manual(page, true);
+    const seed = Number(process.env.PLANET_SEED ?? 12345);
+    await api.newGame(page, seed);
+    const geo = await page.evaluate(() => window.__sf.geo());
+    let ok = 0, n = 0;
+    for (const g of geo) {
+      for (const pad of g.pads) {
+        await api.newGame(page, seed);
+        await api.launch(page);
+        const G = (await page.evaluate(() => window.__sf.geo())).find(x => x.name === g.name);
+        const q = G.pads.find(x => x.name === pad.name);
+        const a = q.angle + G.spin;
+        await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [G.x + Math.cos(a) * (G.maxR + 40), G.y + Math.sin(a) * (G.maxR + 40), G.vx, G.vy, a]);
+        const res = await autoLand(page, g.name, pad.name, 60);
+        n++; if (res.landed) ok++;
+        console.log(`${g.role} ${g.name} / ${pad.kind} ${pad.name} => ${res.landed ? 'LANDED on ' + res.landed.pad : res.alive ? 'NOT LANDED' : 'DEAD'} hull ${res.hull.toFixed(0)}${res.hits.length ? ' hits: ' + res.hits.slice(0, 3).map(h => `${h.t}s -${h.dmg} ${h.src} [${h.near}]`).join(' || ') : ''}`);
+        if (!res.landed) console.log('   ', JSON.stringify(res.log.slice(-3)));
+      }
+    }
+    console.log(`landed ${ok}/${n}`);
+  },
+
+  async planets({ page }) {
+    // the cut worlds: what they look like from above, at a mouth, inside; and whether the autopilot can fly a passage
+    await api.manual(page, true);
+    const seed = Number(process.env.PLANET_SEED ?? 2024);
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const geo = await page.evaluate(() => window.__sf.geo());
+    const refresh = async name => (await page.evaluate(() => window.__sf.geo())).find(x => x.name === name);
+    for (const g0 of geo) {
+      console.log(`${g0.role} ${g0.name} R=${g0.r}: motifs ${g0.motifs.map(m => m.kind).join(',')}`);
+      console.log(`   pads: ${g0.pads.map(p => p.kind + ':' + p.name).join(', ')}`);
+      console.log(`   nets: ${g0.networks.map(n => n.name + '[' + n.fissures + 'f ' + n.rooms.length + 'r ' + n.mouths.length + 'm]').join(', ')}; problems ${g0.problems.length} ${g0.problems.join(' / ')}`);
+      console.log(`   placed: ${g0.placed.join('; ')}`);
+      let G = await refresh(g0.name);
+      const colony = G.pads.find(p => p.kind === 'colony') ?? G.pads[0];
+      const a = Math.atan2(colony.y - G.y, colony.x - G.x);
+      await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [G.x + Math.cos(a) * (G.r + 42), G.y + Math.sin(a) * (G.r + 42), G.vx, G.vy, a]);
+      await api.shot(page, `planet_${g0.role}_colony`, 40);
+      G = await refresh(g0.name);
+      await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [G.x + G.r + 150, G.y, G.vx, G.vy]);
+      await api.shot(page, `planet_${g0.role}_high`, 40);
+      const net = G.networks.slice().sort((p, q) => q.rooms.length - p.rooms.length)[0];
+      if (!net) continue;
+      const mouthA = net.mouths[0] + G.spin;
+      const e0 = net.entry[0];
+      const c0 = Math.cos(G.spin), s0 = Math.sin(G.spin);
+      const ex = G.x + e0.x * c0 - e0.y * s0, ey = G.y + e0.x * s0 + e0.y * c0;
+      await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [ex + Math.cos(mouthA) * 14, ey + Math.sin(mouthA) * 14, G.vx, G.vy, mouthA]);
+      await page.evaluate(() => window.__sf.ping());
+      await api.run(page, {}, 1.0);
+      await api.shot(page, `planet_${g0.role}_mouth`, 5);
+      const main = net.points.filter(p => p.fissure === net.name).map(p => p.local);
+      if (main.length >= 2) {
+        const e0 = net.entry[0];
+        const m0 = { x: e0.x + Math.cos(net.mouths[0]) * 14, y: e0.y + Math.sin(net.mouths[0]) * 14 };
+        const t0 = (await api.state(page)).time;
+        const res = await follow(page, [m0, ...net.entry, ...main], { seconds: 150, tol: 2.2, maxSpeed: 4.5, gain: 2.4, body: G.name });
+        const st = await api.state(page);
+        console.log(`   ${net.name}: followed ${res.reached}/${res.of} alive ${res.alive} hull ${res.hull.toFixed(0)} fuel ${res.fuel.toFixed(0)} in ${(st.time - t0).toFixed(0)} s; frame ${st.frameTime.toFixed(1)} ms`);
+        if (res.reached < res.of) console.log('   ', JSON.stringify(res.log.slice(-3)));
+        await api.shot(page, `planet_${g0.role}_inside`, 30);
+      }
+      G = await refresh(g0.name);
+      const room = G.networks.flatMap(n => n.rooms).sort((p, q) => q.depth - p.depth)[0];
+      if (room) {
+        await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [room.x, room.y, G.vx, G.vy]);
+        await api.run(page, {}, 0.5);
+        await api.shot(page, `planet_${g0.role}_room`, 30);
+      }
+    }
+    const rescues = (await page.evaluate(() => window.__sf.log(0))).filter(e => e.kind === 'wall-rescue').length;
+    console.log('wall rescues during the tour:', rescues);
   },
 
   async cut({ page }) {

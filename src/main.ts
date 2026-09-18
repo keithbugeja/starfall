@@ -13,6 +13,7 @@ import { bodyToWorld } from './sim/walls';
 import { padWorldPos } from './sim/bodies';
 import { poweredAt, socketWorld } from './sim/power';
 import { structurePos } from './sim/structures';
+import { GEOGRAPHY, validatePlanet } from './gen/planet';
 import { canSense, losBlocker, signature, sunlight } from './sim/sense';
 import { createAsteroid, gravityAt, predictTrajectory, spawnPickup, type Trajectory } from './sim/physics';
 import type { PickupKind } from './sim/world';
@@ -144,6 +145,24 @@ const harness = {
     const body = (name: string) => { const b = w.bodies.find(x => x.name === name); return b ? { name, x: b.pos.x, y: b.pos.y, vx: b.vel.x, vy: b.vel.y, r: b.radius, secret: b.secret, found: w.discovered.has(name), spin: b.spinAngle, free: b.free, integrity: b.integrity, pads: b.pads.map(q => q.name) } : null; };
     const pad = (name: string) => { const q = w.pads.find(x => x.name === name); if (!q) return null; const pp = padWorldPos(q, 0); return { name, body: q.body.name, x: pp.x, y: pp.y, alive: q.alive, guns: q.guns }; };
     return { slipway: body('THE SLIPWAY'), lighthouse: body('THE LIGHTHOUSE'), hollow: body('HOLLOW'), fault: body('THE FAULT'), pilgrim: body('PILGRIM'), kiln: pad('THE KILN'), relay: pad('THE RELAY'), mike: pad('BASE MIKE'), core: pad('THE STARFALL'), logs: w.slices.logs.map(l => ({ from: l.from, alive: l.pickup.alive, line: l.line, x: l.pickup.pos.x, y: l.pickup.pos.y })), discovered: [...w.discovered] };
+  },
+  /** The cut worlds: motifs, pads, cave mouths and rooms in world coordinates, and any physical problems. */
+  geo(): unknown {
+    const w = game.world;
+    return w.bodies.filter(b => GEOGRAPHY.has(b)).map(b => {
+      const g = GEOGRAPHY.get(b)!;
+      const wp = (l: { x: number; y: number }) => bodyToWorld(b, l);
+      const ang = (a: number) => { const r = b.maxRadius; return wp({ x: Math.cos(a) * r, y: Math.sin(a) * r }); };
+      return {
+        name: b.name, role: g.role, x: b.pos.x, y: b.pos.y, vx: b.vel.x, vy: b.vel.y, r: b.radius, maxR: b.maxRadius, spin: b.spinAngle,
+        motifs: g.motifs.map(m => ({ kind: m.kind, angle: (m.s0 + m.length / 2) / b.radius })),
+        pads: b.pads.map(q => ({ name: q.name, kind: q.kind, angle: q.angle, ...padWorldPos(q, 0) })),
+        mouths: g.mouths.map(a => ({ angle: a, ...ang(a) })),
+        networks: g.networks.map(n => ({ name: n.name, fissures: n.fissures.length, mouths: n.mouths, entry: n.entry, rooms: n.rooms.map(r => ({ ...wp(r.centre), local: r.centre, hw: r.hw, depth: r.depth, fissure: r.fissure.name })), points: n.points.map(pt => ({ ...wp(pt.p), local: pt.p, hw: pt.hw, fissure: pt.fissure.name })) })),
+        placed: g.placed,
+        problems: validatePlanet(w, b),
+      };
+    });
   },
   cores(): unknown { return game.world.pickups.filter(k => k.alive && k.role === 'core').map(k => ({ name: k.name, origin: k.origin, x: k.pos.x, y: k.pos.y, tethered: !!k.tetheredBy })); },
   journal(): unknown { return game.world.journal.map(e => ({ t: Math.round(e.time), key: e.key, text: e.text })); },

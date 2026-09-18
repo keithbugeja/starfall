@@ -52,9 +52,15 @@ Back opens the map.
 ## The system
 
 The system is authored: five worlds in fixed roles, in a fixed order, with fixed places on them.
-A seed changes names, terrain and timing, never what is where.
+A seed changes names, terrain and timing, never what is where at system scale. The ground of the
+home and inner worlds is generated: their equators are cut as levels (valleys, ridges, craters,
+canyons, shelves, old excavations) with passages under them (caves with rooms and side branches,
+shafts with galleries, tunnels under ridges, shelters under overhangs), and what is in them is placed
+by the same rules as everything else: settlements, depots, works, wreck fields, old plants with a core
+still seated, caches, stranded hulls, rubble, recorders. Nothing in them is marked.
 
-- An inner world close enough to the star that guns run hot in daylight and cool at night.
+- An inner world close enough to the star that guns run hot in daylight and cool at night; under its
+  ground it is always cold.
 - A home world with two colonies, a mine, the harbour, a rock cluster and a moon.
 - A middle world with a colony, a mine, a research station, a gun position in a crater, and a
   quiet listening post on its moon.
@@ -101,6 +107,8 @@ A seed changes names, terrain and timing, never what is where.
   `npx playwright install chromium` and a running `npm run preview`). Scenarios: idle, fly, fall,
   land, smoke, dock, combat, raid, approach, tour, keys, launches, assault, gallery, endings,
   upgrades, audio, perf, tetherphys, cut, pilgrim, signal, fault, kiln, living, stealth, brute, flareops,
-  traffic, patrol, conditions, lighthouse. Screenshots land in `playtest/out/`.
+  traffic, patrol, conditions, lighthouse, planets (the cut worlds: screenshots and a flight through the
+  biggest cave; `PLANET_SEED` picks the seed), padcheck (every pad on the cut worlds approached from
+  above), launchcheck, landone. Screenshots land in `playtest/out/`.
 - `DESIGN.md` records the design decisions and the measured numbers behind them; `starfall.md` is
   the original brief.

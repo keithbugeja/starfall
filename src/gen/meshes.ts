@@ -3,7 +3,7 @@
 import { MeshBuilder, type MeshData } from '../engine/mesh';
 import { fbm3, lerp, Rng, TAU, valueNoise3 } from '../engine/math';
 import { surfaceRadius, type Body } from '../sim/bodies';
-import { pointInPolygon } from '../sim/walls';
+import { edgeOpen, pointInPolygon } from '../sim/walls';
 import type { ShipKind, Station } from '../sim/world';
 
 type V3 = number[];
@@ -159,7 +159,7 @@ export function buildPlanetMesh(b: Body): MeshData {
     return pal.high;
   };
   const padSeg = new Set<number>();
-  for (const p of b.pads) padSeg.add(p.segIndex);
+  for (const p of b.pads) for (let k = 0; k < p.segCount; k++) padSeg.add((p.segIndex + k) % b.segments);
   const padCol = [0.32, 0.34, 0.38];
   for (let j = 0; j < M; j++) {
     for (let i = 0; i < N; i++) {
@@ -216,7 +216,7 @@ export function buildPlanetMesh(b: Body): MeshData {
     const floorCol = [pal.low[0] * 0.35, pal.low[1] * 0.35, pal.low[2] * 0.35];
     const top = (p: { x: number; y: number }): number => b.oblate * Math.sqrt(Math.max(0, R * R - (p.x * p.x + p.y * p.y))) * 1.03 + 0.6;
     for (let i = 0; i < n; i++) {
-      if (i === f.openEdge) continue;
+      if (edgeOpen(f, i)) continue;
       const a = f.outline[i], c = f.outline[(i + 1) % n];
       const ha = top(a), hc = top(c);
       // inward (open side) normal: left of the edge for a counter-clockwise outline, in world-local (x, y, -y) terms

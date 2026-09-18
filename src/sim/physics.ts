@@ -2,9 +2,9 @@
 // trajectory prediction. Everything lives in the sim plane.
 import { angleDiff, clamp, damp, TAU, v2len, wrapAngle, type V2 } from '../engine/math';
 import type { Controls } from '../engine/input';
-import { gravityFrom, maxTerrainRadius, padWorldAngle, padWorldPos, surfaceVelocity, terrainNormalAt, terrainRadiusAt, terrainSegmentAt, type Body, type Pad } from './bodies';
+import { gravityFrom, maxTerrainRadius, padWorldAngle, padWorldPos, surfaceVelocity, terrainNormalAt, terrainRadiusAt, terrainSegmentAt, type Body, type Pad, padCoversSegment } from './bodies';
 import { ambientHeat, coolingRate, sunlight } from './sense';
-import { bodyToWorld, circleVsFissure, fissureAt, rotateVec, segmentVsFissure, worldToBody, type Fissure } from './walls';
+import { bodyToWorld, circleVsWalls, fissureAt, rescueIntoWalls, rotateVec, segmentVsWalls, worldToBody, type Fissure } from './walls';
 import { attachPickup, release } from './tether';
 import { comm, sfx, type Asteroid, type Pickup, type Projectile, type Ship, type World } from './world';
 
@@ -175,6 +175,8 @@ export function inShadow(w: World, p: V2): boolean {
   const sx = w.star.pos.x, sy = w.star.pos.y;
   for (const b of w.bodies) {
     if (b.kind === 'star') continue;
+    // under the ground is out of the sun: a passage more than a few units below the rim is shade at any hour
+    if (b.fissures.length && Math.hypot(p.x - b.pos.x, p.y - b.pos.y) < b.radius - 3.5 && fissureAt(b, p.x, p.y)) return true;
     const bx = b.pos.x - sx, by = b.pos.y - sy;
     const bl = Math.hypot(bx, by);
     if (bl < 1) continue;
@@ -212,9 +214,8 @@ function resolveTerrain(w: World, s: Ship, dt: number): void {
     const ang = Math.atan2(dy, dx);
     // inside a fissure the walls are the surface, not the polar profile
     if (b.fissures.length) {
-      const f = fissureAt(b, s.pos.x, s.pos.y);
-      if (f) {
-        const hit = circleVsFissure(b, f, s.pos.x, s.pos.y, s.radius * 0.72);
+      const { hit, inside } = circleVsWalls(b, s.pos.x, s.pos.y, s.radius * 0.72);
+      if (inside) {
         if (hit) {
           s.pos.x += hit.nx * hit.pen; s.pos.y += hit.ny * hit.pen;
           const radialW = { x: dx / (dist || 1), y: dy / (dist || 1) };
@@ -227,6 +228,11 @@ function resolveTerrain(w: World, s: Ship, dt: number): void {
     const surf = terrainRadiusAt(b, ang);
     const pen = surf + s.radius * 0.72 - dist;
     if (pen <= 0) continue;
+    if (b.fissures.length && pen > 3) {
+      // deep under the ground of a cut world but in no passage: a leak; put the ship back in the nearest passage
+      const back = rescueIntoWalls(b, s.pos.x, s.pos.y, s.radius * 0.72);
+      if (back) { const sv = surfaceVelocity(b, back.x, back.y); s.pos.x = back.x; s.pos.y = back.y; s.vel.x = sv.x; s.vel.y = sv.y; w.log.push({ time: w.time, kind: 'wall-rescue', text: b.name, x: back.x, y: back.y }); continue; }
+    }
     if (b.kind === 'gas') {
       // gas giant atmosphere: no solid surface, but crushing pressure deeper in
       const depth = pen / (b.radius * 0.1);
@@ -246,7 +252,7 @@ function resolveTerrain(w: World, s: Ship, dt: number): void {
     s.pos.x += n.x * pen; s.pos.y += n.y * pen;
     const seg = terrainSegmentAt(b, ang);
     let pad: Pad | null = null;
-    for (const p of b.pads) if (p.segIndex === seg && p.alive !== false) { pad = p; break; }
+    for (const p of b.pads) if (padCoversSegment(p, seg) && p.alive !== false) { pad = p; break; }
     const radial = { x: dx / dist, y: dy / dist };
     const slope = Math.acos(clamp(n.x * radial.x + n.y * radial.y, -1, 1));
     contactResponse(w, s, b, n, pad, pad !== null || slope < 0.20, 0.3);
@@ -312,9 +318,8 @@ export function surfaceInfo(w: World, x: number, y: number): { body: Body; norma
     const dx = x - b.pos.x, dy = y - b.pos.y;
     const d = Math.hypot(dx, dy);
     if (d > b.maxRadius + 130) continue;
-    const f = b.fissures.length ? fissureAt(b, x, y) : null;
-    if (f) {
-      const hit = circleVsFissure(b, f, x, y, 60);
+    const { hit, inside } = circleVsWalls(b, x, y, 60);
+    if (inside) {
       if (hit) {
         const alt = 60 - hit.pen;
         if (!best || alt < best.alt) best = { body: b, normal: { x: hit.nx, y: hit.ny }, vsurf: surfaceVelocity(b, x, y), alt, inFissure: true };
@@ -442,14 +447,13 @@ export function stepProjectiles(w: World, dt: number): void {
       const dist = Math.hypot(dx, dy);
       if (dist > maxTerrainRadius(b) + 1) continue;
       if (b.fissures.length) {
-        const f = fissureAt(b, p.prevPos.x, p.prevPos.y) ?? fissureAt(b, p.pos.x, p.pos.y);
-        if (f) {
-          const hit = segmentVsFissure(b, f, p.prevPos.x, p.prevPos.y, p.pos.x, p.pos.y);
+        const { hit, inside } = segmentVsWalls(b, p.prevPos.x, p.prevPos.y, p.pos.x, p.pos.y);
+        if (inside) {
           if (hit) {
             dead = true;
             const hx = p.prevPos.x + (p.pos.x - p.prevPos.x) * hit.t, hy = p.prevPos.y + (p.pos.y - p.prevPos.y) * hit.t;
             w.explosions.push({ pos: { x: hx, y: hy }, time: w.time, size: 0.3, color: p.color });
-            if (f.fragile) shedRubble(w, b, hx, hy);
+            if (hit.fissure.fragile) shedRubble(w, b, hx, hy);
           }
           if (dead) break;
           continue; // inside a fissure the polar surface does not apply
@@ -492,9 +496,8 @@ function shedRubble(w: World, b: Body, x: number, y: number): void {
 
 /** Circle against fissure walls for asteroids and pickups: push out and bounce. Returns true if inside a fissure. */
 function fissureBounce(b: Body, x: number, y: number, radius: number, vel: V2, rest: number): boolean {
-  const f = fissureAt(b, x, y);
-  if (!f) return false;
-  const hit = circleVsFissure(b, f, x, y, radius);
+  const { hit, inside } = circleVsWalls(b, x, y, radius);
+  if (!inside) return false;
   if (hit) {
     const sv = surfaceVelocity(b, x, y);
     const rvx = vel.x - sv.x, rvy = vel.y - sv.y;
@@ -523,8 +526,8 @@ export function stepAsteroids(w: World, dt: number): void {
       const dist = Math.hypot(dx, dy);
       if (dist > maxTerrainRadius(b) + a.radius + 1) continue;
       if (b.fissures.length) {
-        const hit = b.fissures.length ? circleVsFissure(b, fissureAt(b, a.pos.x, a.pos.y) ?? b.fissures[0], a.pos.x, a.pos.y, a.radius * 0.7) : null;
-        if (fissureAt(b, a.pos.x, a.pos.y)) {
+        const { hit, inside } = circleVsWalls(b, a.pos.x, a.pos.y, a.radius * 0.7);
+        if (inside) {
           if (hit) { a.pos.x += hit.nx * hit.pen; a.pos.y += hit.ny * hit.pen; }
           fissureBounce(b, a.pos.x, a.pos.y, a.radius * 0.7, a.vel, 0.3);
           const fsv = surfaceVelocity(b, a.pos.x, a.pos.y);
@@ -535,6 +538,7 @@ export function stepAsteroids(w: World, dt: number): void {
       }
       const ang = Math.atan2(dy, dx);
       const surf = b.kind === 'star' ? b.radius : terrainRadiusAt(b, ang);
+      if (b.fissures.length && dist < surf - 3) { const back = rescueIntoWalls(b, a.pos.x, a.pos.y, a.radius * 0.7); if (back) { const sv = surfaceVelocity(b, back.x, back.y); a.pos.x = back.x; a.pos.y = back.y; a.vel.x = sv.x; a.vel.y = sv.y; continue; } }
       if (dist < surf + a.radius * 0.6) {
         if (b.kind === 'star') { a.alive = false; break; }
         const n = terrainNormalAt(b, ang);
@@ -644,8 +648,7 @@ export function stepPickups(w: World, dt: number): void {
       if (dist > maxTerrainRadius(b) + p.radius + 1) continue;
       if (b.kind === 'star') { if (dist < b.radius) { p.alive = false; } continue; }
       if (b.fissures.length && fissureAt(b, p.pos.x, p.pos.y)) {
-        const f = fissureAt(b, p.pos.x, p.pos.y)!;
-        const hit = circleVsFissure(b, f, p.pos.x, p.pos.y, p.radius * 0.7);
+        const { hit } = circleVsWalls(b, p.pos.x, p.pos.y, p.radius * 0.7);
         if (hit) { p.pos.x += hit.nx * hit.pen; p.pos.y += hit.ny * hit.pen; }
         fissureBounce(b, p.pos.x, p.pos.y, p.radius * 0.7, p.vel, 0.25);
         const fsv = surfaceVelocity(b, p.pos.x, p.pos.y);
@@ -656,6 +659,7 @@ export function stepPickups(w: World, dt: number): void {
       const ang = Math.atan2(dy, dx);
       const surf = terrainRadiusAt(b, ang);
       const pen = surf + p.radius * 0.6 - dist;
+      if (b.fissures.length && pen > 3) { const back = rescueIntoWalls(b, p.pos.x, p.pos.y, p.radius * 0.6); if (back) { const sv = surfaceVelocity(b, back.x, back.y); p.pos.x = back.x; p.pos.y = back.y; p.vel.x = sv.x; p.vel.y = sv.y; continue; } }
       if (pen > 0) {
         const n = terrainNormalAt(b, ang);
         const bsv = surfaceVelocity(b, p.pos.x, p.pos.y);
