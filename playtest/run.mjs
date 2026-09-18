@@ -1770,7 +1770,10 @@ const sliceScenarios = {
             const dx = tgt.pos.x - p.pos.x, dy = tgt.pos.y - p.pos.y, d = Math.hypot(dx, dy);
             if (d < 320) { arrived = true; break; }
             if (p.docked) sf.launch();
-            const wantVx = tgt.vel.x + dx / d * 45, wantVy = tgt.vel.y + dy / d * 45;
+            // steer around the star and any world that lies across the line (the test pilot is not suicidal)
+            let ux = dx / d, uy = dy / d;
+            for (const b of w.bodies) { const R = (b.kind === 'star' ? b.radius * 2.2 : b.maxRadius + 90); const bx = b.pos.x - p.pos.x, by = b.pos.y - p.pos.y; const along = bx * ux + by * uy; if (along <= 0 || along > d) continue; const perp = bx * uy - by * ux; if (Math.abs(perp) < R) { const side = perp > 0 ? -1 : 1; const px = -uy * side, py = ux * side; const gx0 = b.pos.x + px * R * 1.1, gy0 = b.pos.y + py * R * 1.1; const ddx = gx0 - p.pos.x, ddy = gy0 - p.pos.y, dl = Math.hypot(ddx, ddy) || 1; ux = ddx / dl; uy = ddy / dl; break; } }
+            const wantVx = tgt.vel.x + ux * 45, wantVy = tgt.vel.y + uy * 45;
             const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
             const ax = (wantVx - p.vel.x) * 1.2 - gx, ay = (wantVy - p.vel.y) * 1.2 - gy; const am = Math.hypot(ax, ay);
             const err = wrap(Math.atan2(ay, ax) - p.angle);
