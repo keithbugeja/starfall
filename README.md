@@ -62,6 +62,8 @@ Back opens the map.
   fins, and a socket with a core in it, or a feed from the world's grid. Guns need power and heat up
   when they fire. Sensors need power, something to hear, and a clear line of sight. Parts can be
   damaged; slow rocks stay where they fall. Nothing tells you what any of this is for.
+- The halo around your ship is how loud you are. Brackets around it mean something has you; the tone
+  that falls is the moment nothing does. Things in shadow look dark and cool faster.
 - The journal (J) records what you saw, never what it means.
 - Three hand-built situations exist in every system. They are not marked. Look for a crack in the
   enemy world, a large silent hull that arrives on a bad course, and a signal you can hear before
@@ -76,5 +78,6 @@ Back opens the map.
 - `npm run playtest -- <scenario>` drives the built game in headless Chromium (needs
   `npx playwright install chromium` and a running `npm run preview`). Scenarios: idle, fly, fall,
   land, smoke, dock, combat, raid, approach, tour, keys, launches, assault, gallery, endings,
-  upgrades, audio, perf, tetherphys, cut, pilgrim, signal, fault. Screenshots land in `playtest/out/`.
+  upgrades, audio, perf, tetherphys, cut, pilgrim, signal, fault, kiln, living, stealth, brute, flareops,
+  traffic, patrol, conditions. Screenshots land in `playtest/out/`.
 - `DESIGN.md` records the design decisions; `starfall.md` is the original brief.

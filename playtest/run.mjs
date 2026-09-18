@@ -1762,12 +1762,14 @@ const sliceScenarios = {
         const res = await page.evaluate(([name, ticks]) => {
           const sf = window.__sf, w = sf.game.world, p = w.player;
           sf.refuel();
+          if (p.docked) sf.launch();
           const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
           const tgt = w.stations.find(s => s.name === name) || w.bodies.find(b => b.name === name);
           let arrived = false;
           for (let t = 0; t < ticks && p.alive; t++) {
             const dx = tgt.pos.x - p.pos.x, dy = tgt.pos.y - p.pos.y, d = Math.hypot(dx, dy);
             if (d < 320) { arrived = true; break; }
+            if (p.docked) sf.launch();
             const wantVx = tgt.vel.x + dx / d * 45, wantVy = tgt.vel.y + dy / d * 45;
             const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
             const ax = (wantVx - p.vel.x) * 1.2 - gx, ay = (wantVy - p.vel.y) * 1.2 - gy; const am = Math.hypot(ax, ay);
