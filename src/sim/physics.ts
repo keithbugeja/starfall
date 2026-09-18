@@ -751,6 +751,7 @@ import { makeWeapon as makeWeaponFor } from './world';
 export function breakAsteroid(w: World, a: Asteroid, by: import('./world').Faction): void {
   if (!a.alive) return;
   a.alive = false;
+  a.killedBy = by;
   w.explosions.push({ pos: { x: a.pos.x, y: a.pos.y }, time: w.time, size: 0.5 + a.size * 0.5, color: a.rich ? [1, 0.9, 0.4] : [0.8, 0.75, 0.7] });
   sfx(w, 'rockbreak', a.pos, 0.6 + a.size * 0.15, a.size);
   if (by === 'player') w.score += 5 * a.size;
@@ -777,7 +778,7 @@ export function createAsteroid(w: World, x: number, y: number, vx: number, vy: n
   const a: Asteroid = {
     id: w.nextId++, pos: { x, y }, vel: { x: vx, y: vy }, radius: r, hp: size === 3 ? 60 : size === 2 ? 30 : 12,
     variant: w.rng.int(1000), spinAxis: [ax / l, ay / l, az / l], spinRate: (w.rng.next() - 0.5) * 1.5, spinAngle: w.rng.next() * TAU,
-    size, ore: size, rich: false, field, alive: true, rogue: false,
+    size, ore: size, rich: false, field, alive: true, rogue: false, killedBy: 'none',
   };
   w.asteroids.push(a);
   return a;

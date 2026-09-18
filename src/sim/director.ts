@@ -184,7 +184,9 @@ function openingRaid(w: World, d: DirectorState): void {
   const st = w.respawnStation ?? w.stations[0];
   const colonies = livingColonies(w).filter(p => p.kind === 'colony' && p.population > 0);
   if (!colonies.length) return;
-  const target = colonies.slice().sort((a, b) => dist(padPos(a), st.pos) - dist(padPos(b), st.pos))[0];
+  const clear = colonies.filter(c => w.stations.every(s => dist(padPos(c), s.pos) > 230));
+  const pool = clear.length ? clear : colonies;
+  const target = pool.slice().sort((a, b) => dist(padPos(a), st.pos) - dist(padPos(b), st.pos))[0];
   const tp = padPos(target, 0);
   const dir = fromEnemyDir(w, tp);
   const e = newEvent(w, 'raid', tp, `RAID ON ${target.name}`, 150, 300);
@@ -351,13 +353,13 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
       const tgt = w.rng.pick(targets);
       const tp = 'spin' in tgt ? tgt.pos : padPos(tgt as Pad, 0);
       const a = w.rng.next() * TAU;
-      const r = 320;
+      const r = 520 + w.rng.next() * 200;
       const x = tp.x + Math.cos(a) * r, y = tp.y + Math.sin(a) * r;
       const ast = createAsteroid(w, x, y, 0, 0, 3, -1);
       ast.radius = 5.2; ast.hp = 110; ast.rogue = true;
       // aim: straight at the target with a lead for its motion
       const tv = 'spin' in tgt ? tgt.vel : (tgt as Pad).body.vel;
-      const speed = 26;
+      const speed = 8.5;
       const tt = r / speed;
       const ax = tp.x + tv.x * tt - x, ay = tp.y + tv.y * tt - y;
       const al = Math.hypot(ax, ay) || 1;
@@ -533,8 +535,10 @@ function updateEvents(w: World, dt: number): void {
         const tp = 'spin' in tgt ? tgt.pos : padPos(tgt as Pad, 0);
         if (!ast.alive) {
           const hit = e.data.hit as boolean;
-          if (hit) resolve(w, e, false, `IMPACT. ${'spin' in tgt ? tgt.name : (tgt as Pad).name} TOOK THE HIT.`);
-          else resolve(w, e, true, `ROCK BROKEN UP. ${'spin' in tgt ? tgt.name : (tgt as Pad).name} IS SAFE.`);
+          const name = 'spin' in tgt ? tgt.name : (tgt as Pad).name;
+          if (hit) resolve(w, e, false, `IMPACT. ${name} TOOK THE HIT.`);
+          else if (ast.killedBy === 'player') resolve(w, e, true, `ROCK BROKEN UP. ${name} IS SAFE.`);
+          else { e.reward = 0; resolve(w, e, true, `THE ROCK CAME DOWN ELSEWHERE. ${name} IS SAFE.`); }
           break;
         }
         e.pos = { x: ast.pos.x, y: ast.pos.y };

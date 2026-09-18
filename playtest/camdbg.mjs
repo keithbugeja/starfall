@@ -1,0 +1,22 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+await page.goto('http://localhost:4173/');
+await page.waitForFunction(() => window.__sf && window.__sf.game);
+const out = await page.evaluate(async () => {
+  const sf = window.__sf; sf.manual(true); sf.newGame(2024); sf.launch();
+  const w = sf.game.world;
+  const core = w.pads.find(p => p.kind === 'core');
+  const b = core.body;
+  const alt = 62;
+  const x = b.pos.x + Math.cos(core.angle) * (core.height + alt), y = b.pos.y + Math.sin(core.angle) * (core.height + alt);
+  sf.teleport(x, y, 0, 0, core.angle);
+  for (let i = 0; i < 400; i++) sf.game.updateCamera(1 / 60);
+  const g = sf.game, cam = g.camera;
+  const ship = cam.simToScreen(w.player.pos.x, w.player.pos.y);
+  const gx = b.pos.x + Math.cos(core.angle) * core.height, gy = b.pos.y + Math.sin(core.angle) * core.height;
+  const ground = cam.simToScreen(gx, gy);
+  return { camPos: g.camPos, camHeight: g.camHeight, tilt: g.camTilt, ship, ground, upp: cam.unitsPerPixel(), vp: [cam.viewportW, cam.viewportH], eye: cam.eye, target: cam.target, shipPos: w.player.pos, groundPos: [gx, gy] };
+});
+console.log(JSON.stringify(out, null, 1));
+await browser.close();

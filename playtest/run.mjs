@@ -299,6 +299,24 @@ async function autoFight(page, seconds) {
 }
 
 const moreScenarios = {
+  async endings({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, 8);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.setLives(1));
+    await page.evaluate(() => window.__sf.kill());
+    await api.run(page, {}, 5);
+    await api.shot(page, 'end_gameover', 30);
+    let st = await api.state(page);
+    console.log('after death mode', st.mode, 'lives', st.lives);
+    await api.newGame(page, 8);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.winNow());
+    await api.run(page, {}, 11);
+    st = await api.state(page);
+    console.log('after win mode', st.mode, 'score', st.score);
+    await api.shot(page, 'end_victory', 30);
+  },
   async gallery({ page }) {
     await api.manual(page, true);
     await api.newGame(page, 2024);

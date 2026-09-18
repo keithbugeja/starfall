@@ -74,7 +74,7 @@ export function updateStations(w: World, dt: number): void {
     st.defenceTimer -= dt;
     if (st.alive && st.defenceTimer <= 0) {
       st.defenceTimer = 0.9;
-      let best: Ship | null = null, bd = 130;
+      let best: Ship | null = null, bd = 100;
       for (const s of w.ships) {
         if (!s.alive || s.faction !== 'enemy' || s.landed) continue;
         const d = Math.hypot(s.pos.x - st.pos.x, s.pos.y - st.pos.y);

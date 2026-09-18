@@ -157,6 +157,7 @@ export interface Asteroid {
   field: number;     // belt id or -1
   alive: boolean;
   rogue: boolean;    // event: on collision course
+  killedBy: Faction;
 }
 
 export type PickupKind = 'ore' | 'salvage' | 'pod' | 'fuel' | 'module' | 'wreck';

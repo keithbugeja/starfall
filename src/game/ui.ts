@@ -400,10 +400,12 @@ export function drawGameOver(g: Game): void {
   lines.forEach((l, i) => drawText(H, l, W / 2, Hh * 0.16 + 60 * s + i * 22 * s, 11 * s, i === 0 ? C.amber[0] : C.white[0], i === 0 ? C.amber[1] : C.white[1], i === 0 ? C.amber[2] : C.white[2], 0.9, 'center'));
   if (!won) drawText(H, causeText(w.player.lastDamageSource, w.player.lastHitBy), W / 2, Hh * 0.16 + 60 * s + lines.length * 22 * s + 6 * s, 10 * s, C.dim[0], C.dim[1], C.dim[2], 0.9, 'center');
   const blink = 0.5 + 0.5 * Math.sin(performance.now() / 250);
-  drawText(H, 'ENTER: ANOTHER PATROL (SAME SYSTEM)   ·   N: NEW SYSTEM', W / 2, Hh * 0.78, 12 * s, 1, 1, 1, 0.5 + 0.5 * blink, 'center');
+  drawText(H, won ? 'C: KEEP FLYING   ·   ENTER: ANOTHER PATROL (SAME SYSTEM)   ·   N: NEW SYSTEM' : 'ENTER: ANOTHER PATROL (SAME SYSTEM)   ·   N: NEW SYSTEM', W / 2, Hh * 0.78, 12 * s, 1, 1, 1, 0.5 + 0.5 * blink, 'center');
+  if (won) drawText(H, 'THE FALLEN STAR IS DARK. WHAT IS LEFT OF THE TIDE WILL WITHER WITHOUT IT.', W / 2, Hh * 0.7, 10 * s, C.green[0], C.green[1], C.green[2], 0.85, 'center');
   const inp = g.input;
   if (inp.wasPressed('Enter') || inp.wasPressed('NumpadEnter') || inp.wasPressed('GP0') || inp.wasPressed('GP9')) { g.restart(false); }
   if (inp.wasPressed('KeyN')) { g.restart(true); }
+  if (won && inp.wasPressed('KeyC')) { g.continuePatrol(); }
 }
 
 export function drawPause(g: Game): void {

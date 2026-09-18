@@ -6,6 +6,7 @@ import { forceEvent } from './sim/director';
 import { spawnAiShip } from './sim/ai';
 import type { EventKind, ShipKind, WeaponKind } from './sim/world';
 import { applyUpgrades, installWeapon } from './sim/upgrades';
+import { damageBase } from './sim/physics';
 
 const canvas = document.getElementById('gl') as HTMLCanvasElement;
 let game: Game;
@@ -43,6 +44,9 @@ const harness = {
   },
   give(credits: number): void { game.world.credits += credits; },
   unlockAudio(): void { game.audio.unlock(); },
+  kill(): void { const p = game.world.player; p.hull = 0; p.alive = false; p.lastDamageSource = 'weapon'; p.lastHitBy = 'enemy'; },
+  setLives(n: number): void { game.world.lives = n; },
+  winNow(): void { const c = game.world.enemyCore; if (c) { c.enemyHealth = 1; damageBase(game.world, c, 5); } },
   buyAll(): void {
     const p = game.world.player;
     for (const u of ['retro', 'strafe', 'struts', 'tank', 'engine', 'armour', 'cargo', 'gravdamp', 'sensors', 'tractor', 'heatshield']) if (!p.upgrades.includes(u)) p.upgrades.push(u);

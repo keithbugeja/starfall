@@ -75,6 +75,9 @@ export class Game {
   overlayDim = 0;
   respawnTimer = 0;
   deathTime = -1;
+  nextHullAt = 8000;
+  victoryAt = -1;
+  victoryShown = false;
   private fade = 1;
   private titleOrbit = 0;
   muted = false;
@@ -135,19 +138,28 @@ export class Game {
     this.menuIndex = 0;
     this.respawnTimer = 0;
     this.deathTime = -1;
+    this.nextHullAt = 8000;
+    this.victoryAt = -1;
+    this.victoryShown = false;
     this.mapZoom = 1; this.mapPan.x = 0; this.mapPan.y = 0;
   }
 
   /** From the title: start playing the generated system. */
   beginPatrol(): void {
-    if (this.seedDirty || hashString(this.seedText) !== this.world.seed) {
-      this.newGame(hashString(this.seedText || 'STARFALL'), this.seedText || 'STARFALL');
-      this.seedDirty = false;
-    }
+    // always a fresh world: the title screen ran the sim as an attract mode
+    this.newGame(hashString(this.seedText || 'STARFALL'), this.seedText || 'STARFALL');
+    this.seedDirty = false;
     try { localStorage.setItem('starfall.seed', this.seedText); } catch { /* ignore */ }
     this.mode = 'docked';
     this.menuIndex = 0;
     sfx(this.world, 'dock');
+  }
+
+  /** After a victory debrief: keep flying in the secured system. */
+  continuePatrol(): void {
+    const w = this.world;
+    w.gameOver = false;
+    this.mode = w.player.docked ? 'docked' : 'flight';
   }
 
   restart(newSystem: boolean): void {
@@ -183,7 +195,7 @@ export class Game {
     this.lastFrame = now;
     if (dt > 0.1) dt = 0.1;
     this.input.pollGamepad();
-    const simRuns = (this.mode === 'flight' || this.mode === 'docked' || this.mode === 'gameover') && !this.manual;
+    const simRuns = (this.mode === 'flight' || this.mode === 'docked' || this.mode === 'gameover' || this.mode === 'title') && !this.manual;
     if (simRuns) {
       this.accumulator += dt;
       let steps = 0;
@@ -258,7 +270,7 @@ export class Game {
     this.lastControls = c;
     updateOrbits(w.bodies, w.time, dt);
     updateStations(w, dt);
-    updateDirector(w, dt);
+    if (this.mode !== 'title') updateDirector(w, dt);
     const p = w.player;
     // player
     stepShip(w, p, c, dt);
@@ -310,6 +322,16 @@ export class Game {
       }
     }
     if (w.score > this.highScore) { this.highScore = Math.floor(w.score); try { localStorage.setItem('starfall.highscore', String(this.highScore)); } catch { /* ignore */ } }
+    // an extra hull every milestone, arcade style
+    while (w.score >= this.nextHullAt) {
+      w.lives++;
+      comm(w, 'CONTROL', `SCORE ${this.nextHullAt}: SPARE HULL AUTHORISED. HULLS x${w.lives}.`, [1, 0.9, 0.5], 2);
+      sfx(w, 'success');
+      this.nextHullAt = this.nextHullAt < 20000 ? 20000 : this.nextHullAt * 2;
+    }
+    // victory: the core is dark; give the moment ten seconds, then the debrief
+    if (w.coreDestroyed && this.victoryAt < 0) { this.victoryAt = w.time; }
+    if (this.victoryAt >= 0 && !this.victoryShown && w.time - this.victoryAt > 10 && p.alive) { this.victoryShown = true; this.mode = 'gameover'; }
     w.time += dt;
     w.tick++;
   }
@@ -444,15 +466,16 @@ export class Game {
         }
       }
       height = 58 + speed * 0.85;
-      if (alt < 110) {
-        const k = 1 - clamp(alt / 110, 0, 1);
-        // frame both the ship and the ground: look part-way toward the surface, zoom to fit
-        const toward = Math.min(alt * 0.55, 50);
+      if (alt < 130) {
+        // full ground framing below 80 units, blended in between 130 and 80
+        const k = 1 - clamp((alt - 80) / 50, 0, 1);
+        // frame both the ship and the ground: look half-way toward the surface, zoom to fit
+        const toward = alt * 0.5;
         tx = lerp(tx, p.pos.x + dir.x * lead * 0.3 + groundDir.x * toward, k);
         ty = lerp(ty, p.pos.y + dir.y * lead * 0.3 + groundDir.y * toward, k);
-        const fit = clamp(alt * 1.3 + 34, 40, 140);
+        const fit = clamp(alt * 1.15 + 34, 40, 160);
         height = lerp(height, Math.max(fit, 36 + speed * 0.4), k);
-        tiltTarget = lerp(0.3, 0.06, k);
+        tiltTarget = lerp(0.3, 0.04, Math.sqrt(k));
       }
       // near a station: frame it
       for (const st of w.stations) {
@@ -540,7 +563,7 @@ export class Game {
     this.post.beginVector();
     this.worldLines.clear();
     this.hudLines.clear();
-    if (this.mode === 'flight' || this.mode === 'gameover') this.drawWorldVectors();
+    if (this.mode === 'flight') this.drawWorldVectors();
     if (this.mode === 'flight' || this.mode === 'pause' || (this.mode === 'help' && this.helpReturn === 'flight')) {
       if (w.player.alive) drawFlightHud(this);
       else drawDeath(this);
@@ -733,6 +756,16 @@ export class Game {
       const dx = pr.vel.x / sp * len, dy = pr.vel.y / sp * len;
       L.seg(pr.pos.x - dx, 0.1, -(pr.pos.y - dy), pr.pos.x + dx * 0.3, 0.1, -(pr.pos.y + dy * 0.3), pr.color[0], pr.color[1], pr.color[2], 1, pr.kind === 'mass' ? 3.5 : pr.kind === 'seeker' ? 3 : 2.2);
       if (pr.kind === 'seeker') this.particles.spawn(pr.pos.x, 0.1, -pr.pos.y, 0, 0, 0, 0.3, 1, 0.6, 0.9, 0.3, 0);
+    }
+    // rogue asteroids: show where they are going
+    for (const a of w.asteroids) {
+      if (!a.alive || !a.rogue) continue;
+      predictTrajectory(w, a.pos.x, a.pos.y, a.vel.x, a.vel.y, 1, 40, 0.25, this.trajectory);
+      const T = this.trajectory;
+      for (let i = 0; i + 1 < T.count; i += 2) {
+        L.seg(T.pts[i * 2], 0.1, -T.pts[i * 2 + 1], T.pts[i * 2 + 2], 0.1, -T.pts[i * 2 + 3], 1, 0.75, 0.3, 0.35, 1.3);
+      }
+      L.circleWorld(a.pos.x, 0.2, -a.pos.y, a.radius * 1.5 + Math.sin(w.time * 6), 12, 1, 0.75, 0.3, 0.6, 1.3);
     }
     // explosion rings
     for (let i = this.fx.length - 1; i >= 0; i--) {
