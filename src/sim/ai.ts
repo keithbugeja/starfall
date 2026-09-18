@@ -424,8 +424,10 @@ function reaverAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
     const dx = via.x - s.pos.x, dy = via.y - s.pos.y;
     const d = Math.hypot(px - s.pos.x, py - s.pos.y);
     const dv = Math.hypot(dx, dy) || 1;
-    // approach the hover point above the pad (around the world if it is in the way); slow down near it
-    const sp = clamp(d * 0.22, 1.5, 30);
+    // approach the hover point above the pad (around the world if it is in the way); slow down near it, and never
+    // dive faster than the altitude allows a turn-and-brake
+    const altNow = Math.hypot(s.pos.x - b.pos.x, s.pos.y - b.pos.y) - pad.height;
+    const sp = clamp(d * 0.22, 1.5, Math.min(30, 4 + altNow * 0.14));
     const sv = surfaceVelocity(b, px, py);
     const want: V2 = { x: sv.x + dx / dv * sp, y: sv.y + dy / dv * sp };
     // avoidance only while far out: the whole point is to go down to the surface
