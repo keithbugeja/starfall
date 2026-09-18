@@ -157,6 +157,8 @@ function updateHeat(w: World, s: Ship, dt: number): void {
 function overheat(w: World, s: Ship): void {
   s.overheated = true; s.heat = 1;
   sfx(w, 'overheat', s.pos, s === w.player ? 0.8 : 0.4);
+  // a jammed gun vents: visible from a distance
+  w.explosions.push({ pos: { x: s.pos.x, y: s.pos.y }, time: w.time, size: 0.7, color: [1, 0.55, 0.2] });
   if (s.kind === 'sentinel' && s.ai && s.landed) {
     const pad = s.ai.home as Pad | null;
     const rad = pad?.radiator;
@@ -374,6 +376,11 @@ export function killShip(w: World, s: Ship, source: DamageSource): void {
     const killer = w.ships.find(o => o.id === s.lastHitOwner);
     if (killer && killer.kind === 'sentinel' && killer.ai && killer.ai.home) w.log.push({ time: w.time, kind: 'civ-shot', text: `${s.name}|${(killer.ai.home as Pad).name}`, x: s.pos.x, y: s.pos.y });
   }
+  if (s.faction === 'civ') w.log.push({ time: w.time, kind: 'civ-lost', text: `${s.name}|${source}`, x: s.pos.x, y: s.pos.y });
+  if (s.faction === 'civ' && s.kind === 'shuttle' && source === 'weapon') {
+    const k = spawnPickup(w, 'salvage', s.pos.x, s.pos.y, s.vel.x * 0.6, s.vel.y * 0.6, 30);
+    k.life = 900;
+  }
   if (s.faction === 'civ' && s.kind === 'freighter') {
     // drop cargo
     for (let i = 0; i < 3; i++) spawnPickup(w, 'salvage', s.pos.x + (w.rng.next() - 0.5) * 3, s.pos.y + (w.rng.next() - 0.5) * 3, s.vel.x + (w.rng.next() - 0.5) * 6, s.vel.y + (w.rng.next() - 0.5) * 6, 40);
@@ -519,6 +526,9 @@ export function stepAsteroids(w: World, dt: number): void {
         if (fissureAt(b, a.pos.x, a.pos.y)) {
           if (hit) { a.pos.x += hit.nx * hit.pen; a.pos.y += hit.ny * hit.pen; }
           fissureBounce(b, a.pos.x, a.pos.y, a.radius * 0.7, a.vel, 0.3);
+          const fsv = surfaceVelocity(b, a.pos.x, a.pos.y);
+          const kf = Math.max(0, 1 - 1.5 * dt);
+          a.vel.x = fsv.x + (a.vel.x - fsv.x) * kf; a.vel.y = fsv.y + (a.vel.y - fsv.y) * kf;
           continue;
         }
       }
@@ -637,6 +647,9 @@ export function stepPickups(w: World, dt: number): void {
         const hit = circleVsFissure(b, f, p.pos.x, p.pos.y, p.radius * 0.7);
         if (hit) { p.pos.x += hit.nx * hit.pen; p.pos.y += hit.ny * hit.pen; }
         fissureBounce(b, p.pos.x, p.pos.y, p.radius * 0.7, p.vel, 0.25);
+        const fsv = surfaceVelocity(b, p.pos.x, p.pos.y);
+        const kf = Math.max(0, 1 - 1.5 * dt);
+        p.vel.x = fsv.x + (p.vel.x - fsv.x) * kf; p.vel.y = fsv.y + (p.vel.y - fsv.y) * kf;
         continue;
       }
       const ang = Math.atan2(dy, dx);
@@ -1016,6 +1029,7 @@ export function fireWeapon(w: World, s: Ship, weapon: import('./world').Weapon, 
   s.fireCooldown = weapon.cooldown;
   if (weapon.ammo > 0) weapon.ammo--;
   s.lastFireTime = w.time;
+  s.lastShotHeat = weapon.heat;
   s.heat += weapon.heat;
   if (s.heat >= 1 && !s.overheated) overheat(w, s);
   if (s.ai) s.ai.shotsInBurst++;

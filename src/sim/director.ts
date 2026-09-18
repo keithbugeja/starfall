@@ -1,7 +1,7 @@
 // Director: the living system. Enemy pressure, waves from bases, events with timers and consequences,
 // civilian traffic, colony and mine economies. Nothing here is a quest marker; everything is a situation.
 import { TAU, type V2 } from '../engine/math';
-import { spawnAiShip, spawnSentinel } from './ai';
+import { contactGuess, spawnAiShip, spawnSentinel } from './ai';
 import { addPad, padWorldAngle, padWorldPos, surfaceVelocity, terrainNormalAt, type Body, type Pad } from './bodies';
 import { poweredAt } from './power';
 import { equipBase } from './installations';
@@ -144,8 +144,9 @@ function spawnWave(w: World, base: Pad): void {
   const r = b.radius * 1.6 + 20;
   const pl = w.player;
   const colonies = livingColonies(w);
-  // hunt the player if reachable, else prowl a colony
-  const target = (pl.alive && !pl.docked && dist(pl.pos, b.pos) < 1400) ? { x: pl.pos.x, y: pl.pos.y } : (colonies.length ? padPos(w.rng.pick(colonies), 40) : null);
+  // hunt the player where the tide's sensors last had it, if that fix is fresh and reachable; else prowl a colony
+  const guess = pl.alive && !pl.docked ? contactGuess(w, 45) : null;
+  const target = (guess && dist(guess, b.pos) < 1400) ? guess : (colonies.length ? padPos(w.rng.pick(colonies), 40) : null);
   for (let i = 0; i < n; i++) {
     const kind = (i === n - 1 && w.threat > 3) ? 'lancer' : 'wasp';
     const s = spawnAiShip(w, kind, 'enemy', b.pos.x + Math.cos(a + i * 0.15) * (r + i * 4), b.pos.y + Math.sin(a + i * 0.15) * (r + i * 4), a, target ? 'hunt' : 'patrol', b);
@@ -227,7 +228,7 @@ function spawnEvent(w: World, d: DirectorState): void {
     ['rogue', 1.2],
     ['salvage', 1.6],
     ['flare', d.flareCooldown <= 0 ? 1.2 : 0],
-    ['hunt', w.threat > 3 && pl.alive && !pl.docked ? 1.5 : 0],
+    ['hunt', w.threat > 3 && pl.alive && !pl.docked && contactGuess(w, 90) ? 1.5 : 0],
   ];
   // avoid repeating the same kind twice in a row
   const total = weights.reduce((a, [k, v]) => a + (k === d.lastEventKind ? v * 0.3 : v), 0);
@@ -406,14 +407,16 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
       break;
     }
     case 'hunt': {
-      const dir = fromEnemyDir(w, pl.pos);
-      const sp = { x: pl.pos.x - dir.x * 380, y: pl.pos.y - dir.y * 380 };
+      // the pack is sent to the last fix, not to the player
+      const fix = contactGuess(w, 90) ?? { x: pl.pos.x, y: pl.pos.y };
+      const dir = fromEnemyDir(w, fix);
+      const sp = { x: fix.x - dir.x * 380, y: fix.y - dir.y * 380 };
       const e = newEvent(w, 'hunt', sp, `HUNTER PACK`, 200, 200);
       const n = 2 + Math.floor(w.threat / 3);
       for (let i = 0; i < n; i++) {
         const k = i === 0 && w.threat > 4 ? 'lancer' : 'wasp';
         const s = spawnAiShip(w, k, 'enemy', sp.x + i * 8, sp.y - i * 8, Math.atan2(dir.y, dir.x), 'hunt', null);
-        s.ai!.targetPos = { x: pl.pos.x, y: pl.pos.y };
+        s.ai!.targetPos = { x: fix.x, y: fix.y };
         e.ships.push(s);
       }
       comm(w, 'CONTROL', `WARNING: ${n} HOSTILES VECTORING ON YOUR POSITION.`, [1, 0.5, 0.3], 2, sp);

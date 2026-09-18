@@ -79,8 +79,11 @@ function segSeg(ax: number, ay: number, bx: number, by: number, cx: number, cy: 
 /** Emission signature of a ship: 1 is a ship under main thrust. */
 export function signature(w: World, s: Ship): number {
   let sig = s.landed ? 0.06 : 0.12;
-  sig += s.thrusting * (s.boosting ? 2.2 : 0.9) + (s.retroing + Math.abs(s.strafing)) * 0.25;
-  if (w.time - s.lastFireTime < 1.5) sig += 1.0;
+  // the plume is the engine's actual output: a tuned engine or a boost shows further than a stock burn
+  const output = s.boosting ? s.stats.boostThrust : s.stats.thrust * s.thrusting;
+  sig += (output / 14) * 0.9 + (s.retroing * s.stats.retro + Math.abs(s.strafing) * s.stats.strafe) / 14 * 0.6;
+  // the muzzle flash of a heavy gun carries further than a pulse
+  if (w.time - s.lastFireTime < 1.5) sig += 0.6 + s.lastShotHeat * 8;
   if (w.time - s.lastPingTime < 2.5) sig += 3.0;
   sig += s.heat * 0.4;
   // things that keep the tide's beat radiate it

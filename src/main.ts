@@ -135,6 +135,9 @@ const harness = {
         guns: guns.map(g => ({ id: g.id, x: g.pos.x, y: g.pos.y, heat: g.heat, overheated: g.overheated, target: g.ai?.target ? g.ai.target.name : null, shots: g.ai?.shotsInBurst ?? 0, hull: g.hull })) };
     });
   },
+  contact(): unknown { const c = game.world.contact; return c ? { ...c, age: game.world.time - c.time } : null; },
+  tracked(): number { return game.tracked; },
+  signature(): number { return signature(game.world, game.world.player); },
   cores(): unknown { return game.world.pickups.filter(k => k.alive && k.role === 'core').map(k => ({ name: k.name, origin: k.origin, x: k.pos.x, y: k.pos.y, tethered: !!k.tetheredBy })); },
   journal(): unknown { return game.world.journal.map(e => ({ t: Math.round(e.time), key: e.key, text: e.text })); },
   log(since = 0): unknown { return game.world.log.filter(e => e.time >= since).map(e => ({ t: Math.round(e.time), kind: e.kind, text: e.text, param: e.param ?? 0 })); },

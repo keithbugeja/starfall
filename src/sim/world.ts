@@ -134,6 +134,7 @@ export interface Ship {
   lastPingTime: number;
   lastHitOwner: number; // id of the ship whose shot last hit us
   sensedAt: number;     // last time the player's sensors had this ship
+  lastShotHeat: number; // heat of the last weapon fired: bigger guns flash brighter
 }
 
 export interface Cargo {
@@ -314,7 +315,10 @@ export interface World {
   journalNew: number;
   journalNoteAt: number;
   log: SimLogEntry[];      // things that happened, for the journal and the test harness
+  contact: EnemyContact | null; // the tide's last fix on the player: what its sensors saw, not where the player is
 }
+
+export interface EnemyContact { x: number; y: number; vx: number; vy: number; time: number; by: string; }
 
 export interface SimLogEntry { time: number; kind: string; text: string; x: number; y: number; param?: number; }
 
@@ -479,6 +483,7 @@ export function createShip(w: World, kind: ShipKind, faction: Faction, x: number
     lastPingTime: -1e9,
     lastHitOwner: -1,
     sensedAt: -1e9,
+    lastShotHeat: 0,
   };
   w.ships.push(ship);
   return ship;
@@ -529,6 +534,7 @@ export function createEmptyWorld(seed: number, seedName: string): World {
     journalNew: 0,
     journalNoteAt: -1e9,
     log: [],
+    contact: null,
   };
   return w;
 }

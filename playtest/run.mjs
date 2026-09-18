@@ -1530,6 +1530,328 @@ const sliceScenarios = {
     }
   },
 
+  // ------------------------------------------------------------------ deepening pass: stealth, brute force, flares, traffic
+  /** Fly toward a world point with the main engine (loud) or coast (quiet); returns per-second samples of who has us. */
+  async stealth({ page }) {
+    await api.manual(page, true);
+    const seed = 2024;
+    const who = async () => page.evaluate(() => { const sf = window.__sf, w = sf.game.world, p = w.player; return { tracked: sf.tracked(), sig: sf.signature(), contact: sf.contact(), hunters: w.ships.filter(s => s.alive && s.faction === 'enemy' && s.kind !== 'sentinel').map(s => `${s.kind[0]}:${s.ai.mode}${s.ai.target === p ? '*' : ''}`).join(' ') }; });
+    // ---- 1. a wave is hunting us near the home world. cut engines, coast behind the moon; then thrust; then ping
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const st0 = await api.state(page);
+    const home = st0.bodies.find(b => b.kind === 'planet');
+    const moon = st0.bodies.find(b => b.kind === 'moon');
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [home.x + 420, home.y]);
+    await page.evaluate(() => { for (let i = 0; i < 3; i++) window.__sf.spawnEnemy('wasp', -140 - i * 10, 30 * i, 'hunt'); });
+    await page.evaluate(() => { const w = window.__sf.game.world, p = w.player; for (const s of w.ships) if (s.ai && s.kind === 'wasp') s.ai.targetPos = { x: p.pos.x, y: p.pos.y }; });
+    console.log('--- 1. HUNTED: three wasps sent to our position 140 out');
+    const phases = [
+      { name: 'thrust away 6 s (loud)', c: { thrust: 1 }, sec: 6 },
+      { name: 'coast 15 s (quiet)', c: {}, sec: 15 },
+      { name: 'coast 15 s more', c: {}, sec: 15 },
+      { name: 'boost 4 s', c: { thrust: 1, boost: true }, sec: 4 },
+      { name: 'coast 12 s', c: {}, sec: 12 },
+    ];
+    for (const ph of phases) {
+      await api.run(page, ph.c, ph.sec);
+      const r = await who();
+      console.log(`   after ${ph.name}: tracked by ${r.tracked}, signature ${r.sig.toFixed(2)}, contact age ${r.contact ? r.contact.age.toFixed(0) + 's by ' + r.contact.by : 'none'} | ${r.hunters}`);
+    }
+    // a ping while quiet
+    await page.evaluate(() => window.__sf.ping());
+    await api.run(page, {}, 4);
+    let r = await who();
+    console.log(`   after a ping: tracked by ${r.tracked}, signature ${r.sig.toFixed(2)}, contact age ${r.contact ? r.contact.age.toFixed(0) + 's' : 'none'} | ${r.hunters}`);
+    // ---- 2. break line of sight: put the moon between us and them
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const mv = await page.evaluate(([name]) => { const m = window.__sf.game.world.bodies.find(b => b.name === name); return { x: m.pos.x, y: m.pos.y, vx: m.vel.x, vy: m.vel.y, r: m.radius }; }, [moon.name]);
+    // we sit 60 beyond the moon on the far side from the wasps, at the moon's velocity; wasps 200 on the near side, hunting our position
+    await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [mv.x + mv.r + 40, mv.y, mv.vx, mv.vy]);
+    await page.evaluate(([mx, my, r]) => { const sf = window.__sf, w = sf.game.world, p = w.player; const n0 = w.ships.length; for (let i = 0; i < 2; i++) { sf.spawnEnemy('wasp', -(2 * r + 200) - i * 15, 10 * i, 'hunt'); } window.__hunters = w.ships.slice(n0).map(s => s.id); for (const s of w.ships.slice(n0)) { s.ai.targetPos = { x: p.pos.x, y: p.pos.y }; s.vel.x = p.vel.x; s.vel.y = p.vel.y; } }, [mv.x, mv.y, mv.r]);
+    console.log('--- 2. OCCLUSION: two wasps hunting our position from the far side of a moon; we hold still behind it');
+    for (let i = 0; i < 6; i++) {
+      await api.run(page, {}, 5);
+      r = await who();
+      const near = await page.evaluate(([name]) => { const w = window.__sf.game.world, p = w.player; return window.__hunters.map(id => { const s = w.ships.find(q => q.id === id); if (!s) return 'gone'; return `${s.alive ? '' : 'DEAD(' + s.lastDamageSource + ') '}d${Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y).toFixed(0)}/${window.__sf.los(s.pos.x, s.pos.y, p.pos.x, p.pos.y) ?? 'clear'} ${s.ai.mode}${s.ai.target === p ? '*' : ''}`; }).join(' | '); }, [moon.name]);
+      console.log(`   ${(i + 1) * 5}s: tracked ${r.tracked}, ${r.hunters} | ${near}`);
+    }
+    const lost = await page.evaluate(() => window.__sf.log().filter(e => e.kind === 'contact-lost').map(e => e.t + 's ' + e.text));
+    console.log('   contact-lost log:', lost);
+    // ---- 3. dark approach to BASE KILO by night versus a loud one, and whether a wave launches at us
+    for (const mode of ['dark', 'loud']) {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      const kilo = await page.evaluate(([mode]) => {
+        const sf = window.__sf, w = sf.game.world, p = w.player;
+        const pad = w.pads.find(q => q.name === 'BASE KILO'); const b = pad.body;
+        const sunAng = Math.atan2(w.star.pos.y - b.pos.y, w.star.pos.x - b.pos.x);
+        sf.spinTo(b.name, sunAng + Math.PI - pad.angle); sf.step(1);
+        const a = pad.angle + b.spinAngle;
+        // fall in from 300 above at 5 u/s; loud = boost pulses on the way
+        sf.teleport(b.pos.x + Math.cos(a) * (pad.height + 300), b.pos.y + Math.sin(a) * (pad.height + 300), b.vel.x - Math.cos(a) * 5, b.vel.y - Math.sin(a) * 5, a + Math.PI);
+        pad.spawnTimer = 20; // a wave is due soon: where does it go?
+        let seenAt = null, hitAt = null, hull0 = p.hull, waveTarget = null, waveAt = null;
+        for (let t = 0; t < 120 * 60; t++) {
+          const alt = Math.hypot(p.pos.x - b.pos.x, p.pos.y - b.pos.y) - pad.height;
+          if (alt < 15 || !p.alive) break;
+          sf.controls(mode === 'loud' && (t % 240) < 60 ? { thrust: 1, boost: true } : { thrust: 0 });
+          sf.step(1);
+          if (t % 12 === 0) {
+            const s = sf.sense().filter(q => q.kind === 'sentinel' && q.d < 400);
+            if (seenAt === null && s.some(q => q.seesPlayer)) seenAt = alt;
+            if (hitAt === null && p.hull < hull0) hitAt = alt;
+            if (waveAt === null) { const hunters = w.ships.filter(q => q.alive && q.kind === 'wasp' && q.ai.mode === 'hunt' && q.ai.targetPos); if (hunters.length) { waveAt = t / 120; const h = hunters[0]; waveTarget = Math.hypot(h.ai.targetPos.x - p.pos.x, h.ai.targetPos.y - p.pos.y).toFixed(0); } }
+          }
+        }
+        sf.controls(null);
+        return { seenAt, hitAt, hull: p.hull, waveAt, waveTarget, contact: sf.contact() };
+      }, [mode]);
+      console.log(`--- 3. KILO at night, ${mode}: sensed at alt ${kilo.seenAt === null ? 'never' : kilo.seenAt.toFixed(0)}, first hit at ${kilo.hitAt === null ? 'never' : kilo.hitAt.toFixed(0)}, hull ${kilo.hull.toFixed(0)}; wave ${kilo.waveAt === null ? 'never launched at us' : 'launched at ' + kilo.waveAt.toFixed(0) + 's aimed ' + kilo.waveTarget + ' from us'}; tide contact ${kilo.contact ? 'age ' + kilo.contact.age.toFixed(0) + 's by ' + kilo.contact.by : 'none'}`);
+    }
+  },
+
+  /** The heavy build: armour, tuned engine, mass driver. What does it cost in heat and emissions? */
+  async brute({ page }) {
+    await api.manual(page, true);
+    const seed = 2024;
+    for (const fit of ['stock', 'heavy']) {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      if (fit === 'heavy') await page.evaluate(() => { const sf = window.__sf, p = sf.game.world.player; for (const u of ['armour', 'engine', 'mass']) if (!p.upgrades.includes(u)) p.upgrades.push(u); sf.buyAll(); sf.weapon('mass'); });
+      const r = await page.evaluate(() => {
+        const sf = window.__sf, w = sf.game.world, p = w.player;
+        const b = w.pads.find(q => q.name === 'THE KILN').body;
+        const u = { x: -b.pos.x / Math.hypot(b.pos.x, b.pos.y), y: -b.pos.y / Math.hypot(b.pos.x, b.pos.y) };
+        const out = {};
+        for (const where of ['sun', 'shadow']) {
+          const x = where === 'sun' ? b.pos.x + u.x * 400 : b.pos.x - u.x * 130, y = where === 'sun' ? b.pos.y + u.y * 400 : b.pos.y - u.y * 130;
+          sf.teleport(x, y, b.vel.x, b.vel.y, 0);
+          p.heat = 0; p.overheated = false;
+          let jamAt = null, shots = 0, lastCd = 0, sigFiring = 0, sigIdle = sf.signature();
+          for (let t = 0; t < 120 * 30; t++) { sf.controls({ fire: true }); sf.step(1); if (p.fireCooldown > lastCd) shots++; lastCd = p.fireCooldown; if (t === 60) sigFiring = sf.signature(); if (jamAt === null && p.overheated) jamAt = t / 120; }
+          sf.controls(null);
+          out[where] = { jamAt, shots, sigIdle: sigIdle.toFixed(2), sigFiring: sigFiring.toFixed(2) };
+        }
+        // emissions under way
+        sf.teleport(b.pos.x + u.x * 400, b.pos.y + u.y * 400, b.vel.x, b.vel.y, 0);
+        sf.controls({ thrust: 1 }); sf.step(30); const sigThrust = sf.signature();
+        sf.controls({ thrust: 1, boost: true }); sf.step(30); const sigBoost = sf.signature();
+        sf.controls(null);
+        return { out, sigThrust: sigThrust.toFixed(2), sigBoost: sigBoost.toFixed(2), mass: p.massMul.toFixed(2), thrust: p.stats.thrust.toFixed(1), turn: (p.stats.turnRate / Math.sqrt(p.massMul)).toFixed(2), weapon: p.weapon.kind };
+      });
+      console.log(`${fit.toUpperCase()} (${r.weapon}, mass x${r.mass}, thrust ${r.thrust}, turn ${r.turn}): continuous fire jams at ${r.out.sun.jamAt ?? 'never'} s in sun (${r.out.sun.shots} shots), ${r.out.shadow.jamAt ?? 'never'} s in shadow; signature idle ${r.out.sun.sigIdle}, firing ${r.out.sun.sigFiring}, thrusting ${r.sigThrust}, boosting ${r.sigBoost}`);
+    }
+    // the heavy build against the Kiln by night, from the front: how far out do the guns see it firing, and does it still win in seconds
+    await api.newGame(page, seed);
+    await api.launch(page);
+    await page.evaluate(() => { const sf = window.__sf, p = sf.game.world.player; for (const u of ['armour', 'engine', 'mass']) if (!p.upgrades.includes(u)) p.upgrades.push(u); sf.buyAll(); sf.weapon('mass'); });
+    const k = await page.evaluate(() => {
+      const sf = window.__sf, w = sf.game.world, p = w.player;
+      const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+      const pad = w.pads.find(q => q.name === 'THE KILN'); const b = pad.body;
+      const sunAng = Math.atan2(w.star.pos.y - b.pos.y, w.star.pos.x - b.pos.x);
+      sf.spinTo(b.name, sunAng + Math.PI - pad.angle); sf.step(1);
+      const a = pad.angle + b.spinAngle;
+      sf.teleport(b.pos.x + Math.cos(a) * (pad.height + 55), b.pos.y + Math.sin(a) * (pad.height + 55), b.vel.x, b.vel.y, a + Math.PI);
+      const hp0 = pad.enemyHealth; let t = 0;
+      for (; t < 120 * 90; t++) {
+        if (!p.alive || !pad.alive) break;
+        const rx = p.pos.x - b.pos.x, ry = p.pos.y - b.pos.y, r = Math.hypot(rx, ry); const ux = rx / r, uy = ry / r;
+        const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+        const wantVr = (pad.height + 40 - r) * 0.3; const vr = (p.vel.x - b.vel.x) * ux + (p.vel.y - b.vel.y) * uy;
+        const ax = ux * (wantVr - vr) * 1.5 - gx, ay = uy * (wantVr - vr) * 1.5 - gy; const am = Math.hypot(ax, ay);
+        const pa = pad.angle + b.spinAngle; let tx = b.pos.x + Math.cos(pa) * pad.height, ty = b.pos.y + Math.sin(pa) * pad.height;
+        const sent = w.ships.filter(s => s.alive && s.kind === 'sentinel' && s.ai.home === pad); if (sent.length) { tx = sent[0].pos.x; ty = sent[0].pos.y; }
+        const aim = Math.atan2(ty - p.pos.y, tx - p.pos.x); const need = am > 4; const err = wrap((need ? Math.atan2(ay, ax) : aim) - p.angle);
+        sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: need && Math.abs(err) < 0.4 ? Math.min(1, am / p.stats.thrust) : 0, fire: !need && Math.abs(err) < 0.15 });
+        sf.step(1);
+      }
+      sf.controls(null);
+      return { alive: p.alive, hull: p.hull, base: pad.alive ? `STANDS ${pad.enemyHealth.toFixed(0)}/${hp0}` : 'DESTROYED', t: (t / 120).toFixed(0), heat: p.heat.toFixed(2), jammed: p.overheated };
+    });
+    console.log(`HEAVY vs THE KILN by night: ${k.alive ? 'alive' : 'DEAD'} hull ${k.hull.toFixed(0)}, base ${k.base} in ${k.t} s, weapon heat ${k.heat}${k.jammed ? ' JAMMED' : ''}`);
+  },
+
+  /** Flares as tactics: hunters chasing us into a planet's shadow at flare time; a base's guns during the front. */
+  async flareops({ page }) {
+    await api.manual(page, true);
+    const seed = 2024;
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const r = await page.evaluate(() => {
+      const sf = window.__sf, w = sf.game.world, p = w.player;
+      const b = w.bodies.find(q => q.kind === 'planet');
+      const u = { x: -b.pos.x / Math.hypot(b.pos.x, b.pos.y), y: -b.pos.y / Math.hypot(b.pos.x, b.pos.y) };
+      // we hold in the planet's shadow cone, 240 behind it, on a circular path; three wasps come hunting from the sunlit side
+      { const rr = b.radius + 240; const v = Math.sqrt(b.mass / rr); sf.teleport(b.pos.x - u.x * rr, b.pos.y - u.y * rr, b.vel.x - u.y * v, b.vel.y + u.x * v, 0); }
+      for (let i = 0; i < 3; i++) sf.spawnEnemy('wasp', u.x * (2 * b.radius + 260) + i * 12, u.y * (2 * b.radius + 260) - i * 12, 'hunt');
+      for (const s of w.ships) if (s.ai && s.kind === 'wasp') { s.ai.targetPos = { x: p.pos.x, y: p.pos.y }; s.vel.x = b.vel.x; s.vel.y = b.vel.y; }
+      sf.forceFlare();
+      const out = [];
+      for (let t = 0; t < 120 * 40; t++) {
+        sf.step(1);
+        if (!p.alive) { out.push(`${(t / 120).toFixed(1)}s WE DIED: ${p.lastDamageSource}`); break; }
+        if (t % 480 === 0) out.push(`${t / 120}s flare ${w.flare.active ? 'ACTIVE' : w.flare.warned ? 'coming' : 'over'} me hull ${p.hull.toFixed(0)} shadow ${sf.sun(p.pos.x, p.pos.y) === 0 ? 'y' : 'n'} | wasps ${w.ships.filter(s => s.kind === 'wasp').map(s => `${s.alive ? s.hull.toFixed(0) : 'dead'}${s.alive && sf.sun(s.pos.x, s.pos.y) === 0 ? 's' : ''}`).join(' ')}`);
+      }
+      return out;
+    });
+    console.log('--- FLARE, hunters chasing us into a planet\'s shadow:');
+    for (const l of r) console.log('   ' + l);
+    // a base during the front: KILO by day, its guns and its heat
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const g = await page.evaluate(() => {
+      const sf = window.__sf, w = sf.game.world;
+      const pad = w.pads.find(q => q.name === 'BASE KILO'); const b = pad.body;
+      const sunAng = Math.atan2(w.star.pos.y - b.pos.y, w.star.pos.x - b.pos.x);
+      sf.spinTo(b.name, sunAng - pad.angle); sf.step(1);
+      sf.forceFlare();
+      const out = [];
+      for (let t = 0; t < 120 * 40; t++) { sf.step(1); if (t % 600 === 0) { const K = sf.bases().find(q => q.name === 'BASE KILO'); out.push(`${t / 120}s flare ${w.flare.active ? 'ACTIVE' : w.flare.warned ? 'coming' : 'over'} guns ${K.guns.map(q => q.heat.toFixed(2) + (q.overheated ? 'J' : '')).join(',')} sun ${K.sun.toFixed(1)}`); } }
+      return out;
+    });
+    console.log('--- FLARE over BASE KILO at noon, nobody shooting:', g.join(' | '));
+  },
+
+  /** Traffic as evidence: shuttles into the colony beside the Kiln for ten minutes, Kiln lit and dark; what is left behind. */
+  async traffic({ page }) {
+    await api.manual(page, true);
+    const seed = 2024;
+    for (const lit of [true, false]) {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      const r = await page.evaluate(([lit]) => {
+        const sf = window.__sf, w = sf.game.world;
+        const kiln = w.pads.find(q => q.name === 'THE KILN'); const b = kiln.body; const colony = b.pads.find(q => q.kind === 'colony');
+        if (!lit) { const src = w.power.find(s => s.name === 'THE KILN'); src.core.pos.x += 500; }
+        const a = kiln.angle + b.spinAngle + Math.PI; sf.teleport(b.pos.x + Math.cos(a) * (b.radius + 320), b.pos.y + Math.sin(a) * (b.radius + 320), b.vel.x, b.vel.y, 0);
+        const ids = []; let sent = 0, landed = 0, dead = 0, shot = 0;
+        const seen = new Set();
+        for (let t = 0; t < 120 * 600; t++) {
+          // a shuttle every 40 s from a random bearing 260 out
+          if (t % (120 * 40) === 0) { const ang = Math.random() * Math.PI * 2; ids.push(sf.spawnCiv('shuttle', b.pos.x + Math.cos(ang) * (b.radius + 260), b.pos.y + Math.sin(ang) * (b.radius + 260), colony.name)); sent++; }
+          sf.step(1);
+          for (const id of ids) { if (seen.has(id)) continue; const s = w.ships.find(q => q.id === id); if (!s) { seen.add(id); dead++; continue; } if (s.landed) { seen.add(id); landed++; } else if (!s.alive) { seen.add(id); dead++; if (s.lastDamageSource === 'weapon') shot++; } }
+        }
+        const salvage = w.pickups.filter(k => k.alive && k.kind === 'salvage' && Math.hypot(k.pos.x - b.pos.x, k.pos.y - b.pos.y) < b.radius + 120).length;
+        const K = sf.bases().find(q => q.name === 'THE KILN');
+        const causes = {}; for (const e of sf.log()) if (e.kind === 'civ-lost') { const c = e.text.split('|')[1]; causes[c] = (causes[c] || 0) + 1; }
+        return { sent, landed, dead, shot, salvage, causes, kilnShots: K.guns.reduce((s, g) => s + g.shots, 0), civShotLogs: sf.log().filter(e => e.kind === 'civ-shot').length, sunNow: K.sun.toFixed(2) };
+      }, [lit]);
+      console.log(`TRAFFIC 10 min, Kiln ${lit ? 'LIT' : 'DARK'}: ${r.sent} shuttles sent, ${r.landed} landed, ${r.dead} lost (${r.shot} to guns); losses by cause ${JSON.stringify(r.causes)}; salvage lying near the world ${r.salvage}; civ-shot logs ${r.civShotLogs}`);
+    }
+  },
+
+  /** The living system with the player on patrol rather than parked: a loop between the harbour, the mid colony and back, engines on. */
+  async patrol({ page }) {
+    await api.manual(page, true);
+    const seeds = (process.env.LIVING_SEEDS || '2024').split(',').map(Number);
+    for (const seed of seeds) {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      const st = await api.state(page);
+      const kilnBody = st.pads.find(p => p.name === 'THE KILN').body;
+      const wps = [st.stations[0], st.bodies.find(b => b.name === kilnBody), st.stations[1], st.bodies.find(b => b.kind === 'planet')];
+      console.log(`=== seed ${seed}: patrol loop ${wps.map(x => x.name).join(' -> ')} for 12 minutes, engines on`);
+      let lastLog = 0, leg = 0; const counts = {};
+      for (let minute = 1; minute <= 12; minute++) {
+        // fly toward the current waypoint for a minute at cruise, bounded 300 units from it, then pick the next
+        const wp = wps[leg % wps.length];
+        const res = await page.evaluate(([name, ticks]) => {
+          const sf = window.__sf, w = sf.game.world, p = w.player;
+          sf.refuel();
+          const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+          const tgt = w.stations.find(s => s.name === name) || w.bodies.find(b => b.name === name);
+          let arrived = false;
+          for (let t = 0; t < ticks && p.alive; t++) {
+            const dx = tgt.pos.x - p.pos.x, dy = tgt.pos.y - p.pos.y, d = Math.hypot(dx, dy);
+            if (d < 320) { arrived = true; break; }
+            const wantVx = tgt.vel.x + dx / d * 45, wantVy = tgt.vel.y + dy / d * 45;
+            const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+            const ax = (wantVx - p.vel.x) * 1.2 - gx, ay = (wantVy - p.vel.y) * 1.2 - gy; const am = Math.hypot(ax, ay);
+            const err = wrap(Math.atan2(ay, ax) - p.angle);
+            // shoot back at anything the sensors show within 90
+            let fire = false; const e = w.ships.find(s => s.alive && s.faction === 'enemy' && s.kind !== 'sentinel' && w.time - s.sensedAt < 0.3 && Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y) < 90);
+            let turn = Math.max(-1, Math.min(1, err * 4));
+            if (e) { const ea = Math.atan2(e.pos.y - p.pos.y, e.pos.x - p.pos.x); const ee = wrap(ea - p.angle); turn = Math.max(-1, Math.min(1, ee * 4)); fire = Math.abs(ee) < 0.15; }
+            sf.controls({ turn, thrust: !e && am > 0.5 && Math.abs(err) < 0.5 ? Math.min(1, am / p.stats.thrust) : 0, fire });
+            sf.step(1);
+          }
+          sf.controls(null);
+          if (!p.alive) { sf.teleport(p.pos.x, p.pos.y, 0, 0, 0); }
+          return { arrived, alive: p.alive, hull: p.hull };
+        }, [wp.name, 120 * 60]);
+        if (res.arrived) leg++;
+        const snap = await page.evaluate(([since]) => {
+          const sf = window.__sf, w = sf.game.world, p = w.player;
+          const logs = w.log.filter(e => e.time >= since && e.kind !== 'rock-fall' && e.kind !== 'rock-rest').map(e => ({ t: Math.round(e.time), kind: e.kind, text: e.text }));
+          return { time: w.time, logs, hull: p.hull, tracked: sf.tracked(), sig: sf.signature(), contact: sf.contact(), kills: w.kills, events: w.events.filter(e => !e.resolved && !e.failed).map(e => e.label), journal: w.journal.length, comms: w.comms.filter(c => c.time >= since).map(c => c.from + ': ' + c.text) };
+        }, [lastLog]);
+        lastLog = snap.time;
+        for (const l of snap.logs) counts[l.kind] = (counts[l.kind] || 0) + 1;
+        console.log(`  ${String(minute).padStart(2)}m -> ${wp.name}${res.arrived ? ' (arrived)' : ''} hull ${snap.hull.toFixed(0)} kills ${snap.kills} tracked ${snap.tracked} sig ${snap.sig.toFixed(2)} contact ${snap.contact ? snap.contact.age.toFixed(0) + 's' : 'none'} | ${snap.events.join('; ') || 'quiet'}`);
+        for (const l of snap.logs) if (l.kind !== 'contact-lost' || l.text.includes('|') && !l.text.endsWith('THE DARK')) console.log(`      ${l.t}s ${l.kind}: ${l.text}`);
+        for (const c of snap.comms) if (/LAUNCHING|DOWN|GONE|SILENT|DESTROYED|CRACKED|LOST|STOPPED|RESUMED|REPELLED|VECTORING/.test(c)) console.log(`      comm: ${c}`);
+      }
+      console.log('  log counts:', JSON.stringify(counts));
+      const jn = await page.evaluate(() => window.__sf.journal());
+      console.log('  journal:', jn.map(e => `${e.t}s ${e.text}`));
+    }
+  },
+
+  /** Existing events under different conditions: a raid by day and by night, a siege in and out of the planet's shadow, a rescue during a flare. */
+  async conditions({ page }) {
+    await api.manual(page, true);
+    const seed = 2024;
+    // ---- raid: the player approaches the raided colony from behind the planet, engines off, day and night
+    for (const day of ['day', 'night']) {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      const r = await page.evaluate(([day]) => {
+        const sf = window.__sf, w = sf.game.world, p = w.player;
+        sf.forceEvent('raid'); sf.step(1);
+        const e = w.events.find(q => q.kind === 'raid'); const pad = e.target; const b = pad.body;
+        const sunAng = Math.atan2(w.star.pos.y - b.pos.y, w.star.pos.x - b.pos.x);
+        sf.spinTo(b.name, (day === 'day' ? sunAng : sunAng + Math.PI) - pad.angle); sf.step(1);
+        // we start 250 above the pad, drifting in at 4 u/s, engines off
+        const a = pad.angle + b.spinAngle;
+        sf.teleport(b.pos.x + Math.cos(a) * (pad.height + 250), b.pos.y + Math.sin(a) * (pad.height + 250), b.vel.x - Math.cos(a) * 4, b.vel.y - Math.sin(a) * 4, a + Math.PI);
+        let firstTracked = null, t = 0;
+        for (; t < 120 * 90; t++) { sf.step(1); if (firstTracked === null && sf.tracked() > 0) firstTracked = t / 120; const alt = Math.hypot(p.pos.x - b.pos.x, p.pos.y - b.pos.y) - pad.height; if (alt < 20 || !p.alive) break; }
+        const raiders = e.ships.filter(s => s.alive).map(s => `${s.kind}:${s.ai.mode}${s.ai.target === p ? '*' : ''} heat${s.heat.toFixed(2)}`);
+        return { colony: pad.name, sun: sf.sun(p.pos.x, p.pos.y).toFixed(1), firstTracked, alive: p.alive, hull: p.hull, raiders, t: (t / 120).toFixed(0), label: e.label };
+      }, [day]);
+      console.log(`RAID on ${r.colony} (${day}): drifting in engines off for ${r.t} s, first tracked at ${r.firstTracked ?? 'never'} s, hull ${r.hull.toFixed(0)}; raiders ${r.raiders.join(' ')} | ${r.label}`);
+    }
+    // ---- siege: where the dreadnought sits relative to the planet's shadow, and whether its turrets ever jam
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const s = await page.evaluate(() => {
+      const sf = window.__sf, w = sf.game.world;
+      sf.forceEvent('siege'); sf.step(1);
+      const e = w.events.find(q => q.kind === 'siege'); const st = e.target; const dn = e.ships.find(q => q.kind === 'dreadnought');
+      const out = [];
+      for (let t = 0; t < 120 * 240; t++) { sf.step(1); if (t % (120 * 30) === 0) out.push(`${t / 120}s station ${st.health.toFixed(0)} ${sf.sun(st.pos.x, st.pos.y) === 0 ? 'in shadow' : 'lit'}; dread ${dn.alive ? dn.hull.toFixed(0) + ' heat ' + dn.heat.toFixed(2) + (dn.overheated ? 'J' : '') + (sf.sun(dn.pos.x, dn.pos.y) === 0 ? ' shadow' : ' lit') : 'dead'} d${Math.hypot(dn.pos.x - st.pos.x, dn.pos.y - st.pos.y).toFixed(0)}`); if (!st.alive || !dn.alive) break; }
+      return { station: st.name, out };
+    });
+    console.log(`SIEGE of ${s.station}, unattended:`, s.out.join(' | '));
+    // ---- rescue during a flare: a stranded shuttle in sunlight versus in shadow
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const q = await page.evaluate(() => {
+      const sf = window.__sf, w = sf.game.world;
+      sf.forceEvent('stranded'); sf.step(1);
+      const e = w.events.find(x => x.kind === 'stranded'); const sh = e.target;
+      const shadow0 = sf.sun(sh.pos.x, sh.pos.y) === 0;
+      sf.forceFlare();
+      let t = 0; for (; t < 120 * 60 && sh.alive; t++) sf.step(1);
+      return { shadow0, alive: sh.alive, hull: sh.hull.toFixed(0), t: (t / 120).toFixed(0), cause: sh.lastDamageSource };
+    });
+    console.log(`RESCUE + FLARE: shuttle started ${q.shadow0 ? 'in shadow' : 'in sunlight'}; after ${q.t} s it is ${q.alive ? 'alive, hull ' + q.hull : 'DEAD (' + q.cause + ')'}`);
+  },
+
   async fault({ page }) {
     await api.manual(page, true);
     for (const mode of ['still', 'call']) {

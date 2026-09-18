@@ -166,6 +166,35 @@ The same rules for everything, so that solutions can be invented rather than fou
   rules above. The belt is now generated between adjacent orbits so that a world never sweeps
   through it; before that fix the enemy world took three rocks a minute.
 
+## Operational geography (deepening pass)
+The map is fixed; the practical map moves with light, heat, emissions and what the tide has seen.
+- **The tide's picture** (`World.contact`). Enemy sensors that acquire the player write one fix: position,
+  velocity, time, who. Waves and hunter packs go to that fix, dead-reckoned up to twelve seconds, and only
+  while it is fresh (45 s for waves, 90 s for hunts); with no fix they prowl a colony. Hunters that lose
+  contact search where the target would be if it kept going. Nothing in the director reads the player's
+  true position any more.
+- **Emissions are what is emitted.** Engine emission scales with actual output (a tuned engine and a boost
+  show further than a stock burn); the muzzle flash scales with the weapon's heat per shot (pulse 1.0,
+  mass driver 2.2, rail 3.0 for 1.5 s). Heat stays in the signature, so a ship that has just fought is
+  visible before it cools. There is no stealth statistic and no cloak: a quiet ship is one that emits less.
+- **Perception without numbers.** Ships, rocks and pickups inside a shadow cone are drawn dimmed; the heat
+  bar turns blue in shadow and pulses above 0.75; a halo around the player's marker grows with the square
+  root of its signature; brackets and a soft tick mark that an enemy sensor holds the player, and a falling
+  tone marks the moment none does; enemy ships tint hot and flicker when jammed; a jamming gun vents a puff.
+- **Traffic as evidence.** Civilians approaching a pad within 160 units of a live powered base come in low
+  so the ground hides them; shuttles shot down leave salvage for fifteen minutes, so a bad approach shows
+  its history in wreckage.
+- **Navigation.** Civilians, reavers and hunting wasps route around a world that lies across their line to
+  a destination (a rolling waypoint a quarter turn ahead around the limb, side kept steady) instead of
+  flying into it, and civilians never dive at a pad faster than they can stop. Before this, half the
+  shuttles sent to the colony beside the Kiln died on the terrain whether the Kiln was lit or not.
+- **Pathologies fixed.** Things inside caves and fissures settle on the floor instead of swinging through
+  the hollow's centre (interior gravity is linear, so without floor friction a body oscillates). Belt rocks
+  born inside a world's well are culled. The Fault now rides a Keplerian orbit so its ring is not torn
+  away by the frame mismatch. Known and left: planets ride rails four to fourteen times slower than a
+  free orbit at their radius, so free objects outside a planet's dominance radius (about 220 units for the
+  home world) drift off; the home cluster disperses within minutes and always has.
+
 ## Rendering
 WebGL2, no textures, no external art. Instanced flat-shaded meshes with four-band quantised
 lighting from the star plus a faint camera fill. Lines are screen-space expanded quads with a

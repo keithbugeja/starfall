@@ -185,6 +185,9 @@ export class AudioSystem {
       case 'blip': this.tone('sine', 900 + e.param * 500, 900 + e.param * 500, 0.06, 0.06 * (0.3 + e.param), 0); break;
       case 'tether': if (e.param === 0) { this.noise(0.08, 0.3, 'lowpass', 1400, 300, 1, pan); this.tone('square', 240, 180, 0.07, 0.07, pan); } else { this.tone('square', 180, 240, 0.06, 0.05, pan); } break;
       case 'snap': this.tone('sawtooth', 1200, 80, 0.25, 0.14, pan); this.noise(0.15, 0.3, 'highpass', 2000, 4000, 1, pan); break;
+      case 'tracked': this.tone('square', 1100, 1100, 0.05, 0.06); this.tone('square', 1100, 1100, 0.05, 0.06, 0, 0.12); break;
+      case 'tick': this.tone('square', 980, 980, 0.03, 0.03); break;
+      case 'lost': this.tone('sine', 900, 420, 0.35, 0.06); break;
       case 'note': this.tone('sine', 1560, 1560, 0.05, 0.035); this.tone('sine', 2080, 2080, 0.08, 0.03, 0, 0.06); break;
       case 'powerdown': this.tone('sawtooth', 220, 30, 1.6, 0.12, pan); this.tone('sine', 110, 20, 1.8, 0.1, pan); break;
       case 'transfer': this.noise(0.25, 0.08, 'bandpass', 900, 1400, 2, pan); break;

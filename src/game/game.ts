@@ -12,7 +12,8 @@ import { PostPipeline } from '../engine/post';
 import { buildAsteroidMesh, buildPickupMesh, buildPlanetMesh, buildShipMesh, buildStarMesh, buildStationMesh, buildStructureMesh } from '../gen/meshes';
 import { poweredAt, socketWorld } from '../sim/power';
 import { structureNormal, structurePos } from '../sim/structures';
-import { sunlight } from '../sim/sense';
+import { signature, sunlight } from '../sim/sense';
+import { inShadow } from '../sim/physics';
 import { generateSystem } from '../gen/system';
 import { maxTerrainRadius, padWorldAngle, padWorldPos, terrainNormalAt, terrainRadiusAt, type Body } from '../sim/bodies';
 import { gravityAt, LAND_VN, predictTrajectory, type Trajectory } from '../sim/physics';
@@ -93,6 +94,9 @@ export class Game {
   private lastPingAt = -1e9;
   harnessTransfer = false;
   audioLog: string[] = [];
+  tracked = 0;          // enemies that currently hold the player as a sensed target
+  trackedSince = -1e9;
+  private lastTick = -1e9;
 
   constructor(public canvas: HTMLCanvasElement) {
     this.gl = createGL(canvas);
@@ -309,6 +313,15 @@ export class Game {
       w.screenShake = 1;
     }
     this.checkDeath(dt);
+    // who has us: the count of enemies holding the player as a sensed target, and the moment it drops to none
+    {
+      let n = 0;
+      for (const s of w.ships) if (s.alive && s.faction === 'enemy' && s.ai && s.ai.target === p && w.time - s.ai.lastSeen < 1.2) n++;
+      if (n > 0 && this.tracked === 0) { this.trackedSince = w.time; sfx(w, 'tracked', null, 0.6); }
+      if (n === 0 && this.tracked > 0 && w.time - this.trackedSince > 2) sfx(w, 'lost', null, 0.6);
+      if (n > 0 && w.time - this.lastTick > 1.4) { this.lastTick = w.time; sfx(w, 'tick', null, 0.5); }
+      this.tracked = n;
+    }
     // consume sim-side effects
     for (const e of w.explosions) this.spawnExplosion(e.pos.x, e.pos.y, e.size, e.color);
     w.explosions.length = 0;
@@ -488,7 +501,8 @@ export class Game {
       const mesh = list[a.variant % list.length];
       const s = a.spinAngle;
       mat4TRS(m, a.pos.x, 0, -a.pos.y, s * a.spinAxis[1], s * a.spinAxis[0], s * a.spinAxis[2], a.radius, a.radius, a.radius);
-      mesh.add(m, a.rich ? 1.25 : 1, a.rich ? 1.1 : 1, a.rich ? 0.55 : 1, a.rogue ? 0.15 : 0);
+      const dim = inShadow(w, a.pos) ? 0.45 : 1;
+      mesh.add(m, (a.rich ? 1.25 : 1) * dim, (a.rich ? 1.1 : 1) * dim, (a.rich ? 0.55 : 1) * dim, a.rogue ? 0.15 : 0);
     }
     for (const s of w.ships) {
       if (!s.alive || s.docked) continue;
@@ -500,14 +514,17 @@ export class Game {
       mat4TRS(m, s.pos.x, y, -s.pos.y, s.angle, 0, roll, 1, 1, 1);
       const hitFlash = w.time - s.lastDamageTime < 0.08 ? 1 : 0;
       const inv = s.invuln > 0 ? 0.5 + 0.5 * Math.sin(w.time * 30) : 0;
-      mesh.add(m, 1 + hitFlash, 1 + hitFlash + inv * 0.3, 1 + hitFlash + inv * 0.6, hitFlash * 0.8);
+      const dim = inShadow(w, s.pos) ? 0.45 : 1;
+      const h = s.heat, jam = s.overheated ? 0.6 + 0.4 * Math.sin(w.time * 25) : 1;
+      mesh.add(m, (1 + hitFlash + h * 0.5) * dim * jam, (1 + hitFlash + inv * 0.3 - h * 0.25) * dim * jam, (1 + hitFlash + inv * 0.6 - h * 0.45) * dim * jam, hitFlash * 0.8 + h * 0.35);
     }
     for (const p of w.pickups) {
       if (!p.alive) continue;
       const mesh = this.pickupMeshes.get(p.kind);
       if (!mesh) continue;
       mat4TRS(m, p.pos.x, 0, -p.pos.y, w.time * p.spin, 0, p.kind === 'pod' || p.kind === 'wreck' ? 0 : w.time * 0.7, 1, 1, 1);
-      mesh.add(m, 1, 1, 1, p.kind === 'module' ? 0.5 + 0.4 * Math.sin(w.time * 5) : 0);
+      const dim = inShadow(w, p.pos) ? 0.45 : 1;
+      mesh.add(m, dim, dim, dim, p.kind === 'module' ? 0.5 + 0.4 * Math.sin(w.time * 5) : 0);
     }
     for (const sx of w.structures) {
       if (!sx.alive) continue;
@@ -706,6 +723,19 @@ export class Game {
         L.seg(nx, 0.4, -ny, rx, 0.4, -ry, 0.6, 0.95, 1.0, a, 1.3);
         L.seg(lx, 0.4, -ly, p.pos.x - cx * ms * 0.45, 0.4, -(p.pos.y - cy * ms * 0.45), 0.6, 0.95, 1.0, a, 1.3);
         L.seg(rx, 0.4, -ry, p.pos.x - cx * ms * 0.45, 0.4, -(p.pos.y - cy * ms * 0.45), 0.6, 0.95, 1.0, a, 1.3);
+        // how loud we are: a halo that grows with what the hull is putting out (no number, no range)
+        const sig = signature(w, p);
+        const loud = Math.sqrt(Math.max(0, sig - 0.1));
+        if (loud > 0.15) L.circleWorld(p.pos.x, 0.35, -p.pos.y, ms * (1.2 + loud * 1.6), 20, 1, 0.75, 0.45, clamp(loud * 0.35, 0.05, 0.55), 1.2 + loud);
+        // something has us: brackets that tighten while a sensor holds the target
+        if (this.tracked > 0) {
+          const bs = ms * 1.9, ba = 0.55 + 0.35 * Math.sin(w.time * 9);
+          for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+            const kx = p.pos.x + sx * bs, ky = p.pos.y + sy * bs;
+            L.seg(kx, 0.4, -ky, kx - sx * bs * 0.4, 0.4, -ky, 1, 0.35, 0.3, ba, 1.4);
+            L.seg(kx, 0.4, -ky, kx, 0.4, -(ky - sy * bs * 0.4), 1, 0.35, 0.3, ba, 1.4);
+          }
+        }
       }
       if (p.thrusting > 0 && p.fuel > 0) {
         const len = (p.boosting ? 5.5 : 2.2 + p.thrusting * 1.4) * (0.8 + Math.random() * 0.4);

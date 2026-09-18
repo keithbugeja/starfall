@@ -6,6 +6,22 @@ import { emptyControls, type Controls } from '../engine/input';
 import { maxTerrainRadius, padWorldAngle, padWorldPos, surfaceVelocity, terrainNormalAt, terrainRadiusAt, type Body, type Pad } from './bodies';
 import { canSense, losBlocker } from './sense';
 import { coreOnCable, poweredAt } from './power';
+
+/** An enemy sensor has the player: the tide's picture is what its sensors saw, nothing more. */
+function noteContact(w: World, by: Ship, t: Ship): void {
+  if (t !== w.player) return;
+  w.contact = { x: t.pos.x, y: t.pos.y, vx: t.vel.x, vy: t.vel.y, time: w.time, by: by.name };
+}
+
+/** Where the tide thinks the player is, extrapolated a bounded time from the last fix. Null when it has none fresh enough. */
+export function contactGuess(w: World, maxAge: number): V2 | null {
+  const c = w.contact;
+  if (!c) return null;
+  const age = w.time - c.time;
+  if (age > maxAge) return null;
+  const t = Math.min(age, 12);
+  return { x: c.x + c.vx * t, y: c.y + c.vy * t };
+}
 import { rotateVec, worldToBody } from './walls';
 import { fireWeapon, gravityAt, spawnPickup } from './physics';
 import { hubRadius, localAngle } from './stations';
@@ -85,6 +101,39 @@ function velocityControl(w: World, s: Ship, wx: number, wy: number, gain: number
   }
 }
 
+/** If the straight line from a ship to a point near a body passes through that body, a waypoint around its limb; else the point itself. */
+function routeAround(b: Body, from: V2, to: V2, side: number): V2 {
+  const R = maxTerrainRadius(b) + 6;
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const l2 = dx * dx + dy * dy || 1e-9;
+  const t = clamp(((b.pos.x - from.x) * dx + (b.pos.y - from.y) * dy) / l2, 0, 1);
+  const cx = from.x + dx * t - b.pos.x, cy = from.y + dy * t - b.pos.y;
+  // the destination itself may sit on the surface: only a dip into the world before the end counts
+  if (t > 0.92 || cx * cx + cy * cy > R * R) return to;
+  // go around the limb: a rolling waypoint up to a quarter turn ahead of us, on the destination's side
+  // (when the destination is straight through the world the caller's side keeps the choice steady)
+  const a0 = Math.atan2(from.y - b.pos.y, from.x - b.pos.x), a1 = Math.atan2(to.y - b.pos.y, to.x - b.pos.x);
+  const diff = angleDiff(a0, a1);
+  const dir = Math.abs(diff) > 2.6 ? (side || 1) : Math.sign(diff) || 1;
+  const mid = a0 + dir * Math.min(Math.abs(diff), Math.PI / 2);
+  const r = Math.max(R + 20, b.radius * 1.4);
+  return { x: b.pos.x + Math.cos(mid) * r, y: b.pos.y + Math.sin(mid) * r };
+}
+
+/** The body, if any, that the straight line from a ship to a point passes through. */
+function bodyInTheWay(w: World, from: V2, to: V2): Body | null {
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const l2 = dx * dx + dy * dy || 1e-9;
+  for (const b of w.bodies) {
+    if (b.kind === 'gas' && false) continue;
+    const R = (b.kind === 'star' ? b.radius * 1.5 : maxTerrainRadius(b)) + 6;
+    const t = clamp(((b.pos.x - from.x) * dx + (b.pos.y - from.y) * dy) / l2, 0, 1);
+    const cx = from.x + dx * t - b.pos.x, cy = from.y + dy * t - b.pos.y;
+    if (t <= 0.92 && cx * cx + cy * cy < R * R && Math.hypot(from.x - b.pos.x, from.y - b.pos.y) > R * 0.9) return b;
+  }
+  return null;
+}
+
 /** Add an avoidance velocity if the ship's near-future path intersects a body or the star. */
 function avoidBodies(w: World, s: Ship, want: V2, lookahead = 2.2): void {
   for (const b of w.bodies) {
@@ -131,7 +180,7 @@ function findTarget(w: World, s: Ship, range: number): Ship | null {
     const d = Math.hypot(o.pos.x - s.pos.x, o.pos.y - s.pos.y) * 1.3; // prefer the player slightly
     if (d < bd && canSense(w, s.pos.x, s.pos.y, range, o)) { best = o; bd = d; }
   }
-  if (best && s.ai) { s.ai.lastSeen = w.time; s.ai.targetPos = { x: best.pos.x, y: best.pos.y }; }
+  if (best && s.ai) { s.ai.lastSeen = w.time; s.ai.targetPos = { x: best.pos.x, y: best.pos.y }; noteContact(w, s, best); }
   return best;
 }
 
@@ -141,10 +190,13 @@ function keepContact(w: World, s: Ship, ai: AiState, range: number): boolean {
   if (!t) return false;
   if ((w.tick + s.id) % 6 === 0) {
     const shotAt = w.time - ai.memory < 8;
-    if (shotAt || canSense(w, s.pos.x, s.pos.y, range, t)) { ai.lastSeen = w.time; ai.targetPos = { x: t.pos.x, y: t.pos.y }; }
+    if (shotAt || canSense(w, s.pos.x, s.pos.y, range, t)) { ai.lastSeen = w.time; ai.targetPos = { x: t.pos.x, y: t.pos.y }; noteContact(w, s, t); }
     else if (w.time - ai.lastSeen > 3) {
       const blocker = losBlocker(w, s.pos.x, s.pos.y, t.pos.x, t.pos.y);
       w.log.push({ time: w.time, kind: 'contact-lost', text: `${s.name}|${blocker ?? 'THE DARK'}`, x: s.pos.x, y: s.pos.y, param: blocker ? 1 : 0 });
+      // dead reckoning: search where the target would be if it kept going the way it was last going
+      const g = t === w.player ? contactGuess(w, 30) : null;
+      ai.targetPos = g ?? { x: t.pos.x + t.vel.x * 5, y: t.pos.y + t.vel.y * 5 };
       ai.target = null;
       ai.mode = 'hunt';
       return false;
@@ -225,9 +277,12 @@ function waspAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
     const t = findTarget(w, s, ai.mode === 'hunt' ? 900 : 320);
     if (t) { ai.target = t; ai.mode = 'run'; ai.timer = 5 + w.rng.next() * 2; ai.strafeDir = w.rng.sign(); }
     else if (ai.mode === 'hunt' && ai.targetPos) {
-      const want: V2 = { x: ai.targetPos.x - s.pos.x, y: ai.targetPos.y - s.pos.y };
-      const d = Math.hypot(want.x, want.y) || 1;
-      want.x = want.x / d * 60; want.y = want.y / d * 60;
+      const blk = bodyInTheWay(w, s.pos, ai.targetPos);
+      const via = blk ? routeAround(blk, s.pos, ai.targetPos, ai.strafeDir) : ai.targetPos;
+      const want: V2 = { x: via.x - s.pos.x, y: via.y - s.pos.y };
+      const dv = Math.hypot(want.x, want.y) || 1;
+      const d = Math.hypot(ai.targetPos.x - s.pos.x, ai.targetPos.y - s.pos.y) || 1;
+      want.x = want.x / dv * 60; want.y = want.y / dv * 60;
       avoidBodies(w, s, want);
       velocityControl(w, s, want.x, want.y, 1.0, c, true);
       if (d < 60) { ai.mode = 'patrol'; ai.homeBody = null; }
@@ -284,9 +339,12 @@ function lancerAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
     const t = findTarget(w, s, ai.mode === 'hunt' ? 900 : 300);
     if (t) { ai.target = t; ai.mode = 'pursue'; ai.timer = 0; }
     else if (ai.mode === 'hunt' && ai.targetPos) {
-      const want: V2 = { x: ai.targetPos.x - s.pos.x, y: ai.targetPos.y - s.pos.y };
-      const d = Math.hypot(want.x, want.y) || 1;
-      want.x = want.x / d * 55; want.y = want.y / d * 55;
+      const blk = bodyInTheWay(w, s.pos, ai.targetPos);
+      const via = blk ? routeAround(blk, s.pos, ai.targetPos, ai.strafeDir) : ai.targetPos;
+      const want: V2 = { x: via.x - s.pos.x, y: via.y - s.pos.y };
+      const dv = Math.hypot(want.x, want.y) || 1;
+      const d = Math.hypot(ai.targetPos.x - s.pos.x, ai.targetPos.y - s.pos.y) || 1;
+      want.x = want.x / dv * 55; want.y = want.y / dv * 55;
       avoidBodies(w, s, want);
       velocityControl(w, s, want.x, want.y, 1.0, c, true);
       if (d < 60) { ai.mode = 'patrol'; ai.homeBody = null; }
@@ -338,12 +396,14 @@ function reaverAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
     const alt = arc > 18 ? 70 : 9;
     const hp = padWorldPos(pad, alt);
     const px = hp.x, py = hp.y;
-    const dx = px - s.pos.x, dy = py - s.pos.y;
-    const d = Math.hypot(dx, dy);
-    // approach the hover point above the pad; slow down near it
+    const via = routeAround(b, s.pos, hp, ai.strafeDir);
+    const dx = via.x - s.pos.x, dy = via.y - s.pos.y;
+    const d = Math.hypot(px - s.pos.x, py - s.pos.y);
+    const dv = Math.hypot(dx, dy) || 1;
+    // approach the hover point above the pad (around the world if it is in the way); slow down near it
     const sp = clamp(d * 0.22, 1.5, 30);
     const sv = surfaceVelocity(b, px, py);
-    const want: V2 = { x: sv.x + dx / (d || 1) * sp, y: sv.y + dy / (d || 1) * sp };
+    const want: V2 = { x: sv.x + dx / dv * sp, y: sv.y + dy / dv * sp };
     // avoidance only while far out: the whole point is to go down to the surface
     if (d > 110) avoidBodies(w, s, want, 1.5);
     velocityControl(w, s, want.x, want.y, 2.0, c);
@@ -461,7 +521,9 @@ function civAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
   if (s.landed) { ai.timer -= 0; if (ai.timer < -20) s.alive = false; return; } // delivered: wait then vanish
   const pwa = padWorldAngle(pad);
   const arcC = Math.abs(angleDiff(Math.atan2(s.pos.y - b.pos.y, s.pos.x - b.pos.x), pwa)) * b.radius;
-  const altC = arcC > 18 ? 70 : 20;
+  // pilots know where the guns are: within reach of a live base they come in low and let the ground hide them
+  const guns = b.pads.some(q => q !== pad && q.alive && (q.kind === 'enemybase' || q.kind === 'core') && Math.abs(angleDiff(q.angle, pad.angle)) * b.radius < 160 && poweredAt(w, b, ...(() => { const pp = padWorldPos(q, 2); return [pp.x, pp.y] as [number, number]; })()));
+  const altC = arcC > 18 ? (guns ? 22 : 70) : 20;
   const hpos = padWorldPos(pad, altC);
   const hx = hpos.x, hy = hpos.y;
   const dx = hx - s.pos.x, dy = hy - s.pos.y;
@@ -471,8 +533,11 @@ function civAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
   if (ai.mode === 'descend' && d > 40) ai.mode = 'travel';
   if (ai.mode !== 'descend' && d < 8 && altC <= 20) ai.mode = 'descend';
   if (ai.mode !== 'descend') {
-    const sp = clamp(d * 0.3, 4, 32);
-    const want: V2 = { x: svp.x + dx / d * sp, y: svp.y + dy / d * sp };
+    const via = routeAround(b, s.pos, { x: hx, y: hy }, ai.strafeDir);
+    const vx0 = via.x - s.pos.x, vy0 = via.y - s.pos.y, vd = Math.hypot(vx0, vy0) || 1;
+    const altNow = Math.hypot(s.pos.x - b.pos.x, s.pos.y - b.pos.y) - pad.height;
+    const sp = clamp(d * 0.3, 4, Math.min(32, 4 + altNow * 0.12));
+    const want: V2 = { x: svp.x + vx0 / vd * sp, y: svp.y + vy0 / vd * sp };
     if (d > 110) avoidBodies(w, s, want, 1.5);
     velocityControl(w, s, want.x, want.y, 1.4, c);
     return;
@@ -558,6 +623,7 @@ function sentinelAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): vo
       }
       if (t) { ai.lastSeen = w.time; ai.shotsInBurst = ai.target === t ? ai.shotsInBurst : 0; }
     }
+    if (t) noteContact(w, s, t);
     ai.target = t;
   }
   const t = ai.target;

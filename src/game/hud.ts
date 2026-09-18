@@ -9,6 +9,7 @@ import { hubRadius, localAngle } from '../sim/stations';
 import { hasSensors } from '../sim/upgrades';
 import type { GameEvent, Ship, Station, World } from '../sim/world';
 import { padWorldPos, terrainNormalAt, terrainRadiusAt } from '../sim/bodies';
+import { sunlight } from '../sim/sense';
 import type { Game } from './game';
 
 export interface NavTarget {
@@ -88,7 +89,10 @@ export function drawFlightHud(g: Game): void {
   };
   bar('HULL', by, p.hull / p.hullMax, p.hull < p.hullMax * 0.3 ? C.red : C.cyan, p.hull < p.hullMax * 0.3);
   bar('FUEL', by + 32 * s, p.fuel / p.fuelMax, p.fuel < p.fuelMax * 0.2 ? C.red : C.amber, p.fuel < p.fuelMax * 0.2);
-  bar('HEAT', by + 64 * s, p.heat, p.overheated ? C.red : [1.0, 0.55, 0.35], p.overheated);
+  // in shadow the bar cools blue; hot and lit it burns amber; near the top it pulses
+  const shade = p.docked ? 1 : 1 - sunlight(w, p.pos.x, p.pos.y, null);
+  const heatCol = p.overheated ? C.red : shade > 0.5 ? [0.45, 0.8, 1.0] : [1.0, 0.55, 0.35];
+  bar('HEAT', by + 64 * s, p.heat, heatCol, p.overheated || p.heat > 0.75);
   if (p.shield > 0) drawText(H, `SHIELD ${p.shield.toFixed(0)}`, bx, by - 30 * s, 10 * s, C.violet[0], C.violet[1], C.violet[2], 0.8);
 
   // cargo / pod

@@ -86,7 +86,8 @@ export function generateSystem(seed: number, seedName: string): World {
 
   // gravity anomaly: "the Fault" - tiny, brutally heavy, guards a prize
   const faultOrbit = Math.round((plans[2].body.orbit!.radius + plans[3].body.orbit!.radius) / 2);
-  const fault = createBody({ name: 'THE FAULT', kind: 'planet', type: 'crystal', radius: 14, surfaceG: 60, roughness: 0.2, orbit: { parent: star, radius: faultOrbit, period: 3200, phase: rng.next() * TAU }, palette: PALETTES.fault, seed: seed + 4242, landable: false, soiMul: 16 });
+  // the Fault rides a true orbit (its period follows the star's mass), so the free rocks around it stay with it
+  const fault = createBody({ name: 'THE FAULT', kind: 'planet', type: 'crystal', radius: 14, surfaceG: 60, roughness: 0.2, orbit: { parent: star, radius: faultOrbit, period: TAU * Math.sqrt(faultOrbit * faultOrbit * faultOrbit / star.mass), phase: rng.next() * TAU }, palette: PALETTES.fault, seed: seed + 4242, landable: false, soiMul: 16 });
   w.bodies.push(fault);
   plans.push({ body: fault, role: 'fault', moons: [] });
 
@@ -259,8 +260,9 @@ export function generateSystem(seed: number, seedName: string): World {
     const ast = createAsteroid(w, fault.pos.x + Math.cos(a) * r, fault.pos.y + Math.sin(a) * r, fault.vel.x - Math.sin(a) * v, fault.vel.y + Math.cos(a) * v, rng.next() < 0.5 ? 2 : 1, 3);
     ast.rich = rng.chance(0.6);
   }
-  // nothing starts inside a body
+  // nothing starts inside a body, and belt rocks born inside a world's well (they would fall within seconds) are culled
   w.asteroids = w.asteroids.filter(a => w.bodies.every(b => Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.maxRadius + a.radius + 3));
+  w.asteroids = w.asteroids.filter(a => a.field !== 1 || w.bodies.every(b => b.kind === 'star' || Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.soi * 0.8));
   // unique module orbiting the Fault
   {
     const a = rng.next() * TAU, r = 48;
