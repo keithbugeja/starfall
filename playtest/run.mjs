@@ -1857,6 +1857,42 @@ const sliceScenarios = {
     console.log(`RESCUE + FLARE: shuttle started ${q.shadow0 ? 'in shadow' : 'in sunlight'}; after ${q.t} s it is ${q.alive ? 'alive, hull ' + q.hull : 'DEAD (' + q.cause + ')'}`);
   },
 
+  // ------------------------------------------------------------------ the Lighthouse: land, sit out a flare, feed it, speak to it
+  async lighthouse({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.buyAll());
+    const lh = await page.evaluate(() => window.__sf.places().lighthouse);
+    // approach from the dark side, 70 out, matching its motion
+    const dark = await page.evaluate(() => { const w = window.__sf.game.world; const b = w.bodies.find(x => x.name === 'THE LIGHTHOUSE'); const ux = b.pos.x / Math.hypot(b.pos.x, b.pos.y), uy = b.pos.y / Math.hypot(b.pos.x, b.pos.y); return { x: b.pos.x + ux * 70, y: b.pos.y + uy * 70, vx: b.vel.x, vy: b.vel.y, a: Math.atan2(uy, ux) }; });
+    await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [dark.x, dark.y, dark.vx, dark.vy, dark.a]);
+    const g0 = await page.evaluate(() => { const sf = window.__sf, p = sf.game.world.player; const [gx, gy] = sf.gravity(p.pos.x, p.pos.y); return { g: Math.hypot(gx, gy).toFixed(2), sun: sf.sun(p.pos.x, p.pos.y).toFixed(2), found: sf.places().lighthouse.found }; });
+    console.log(`LIGHTHOUSE at ${Math.hypot(lh.x, lh.y).toFixed(0)} from the star; on its dark side 70 out: gravity ${g0.g}, sunlight ${g0.sun}, named yet ${g0.found}`);
+    const res = await autoLand(page, 'THE LIGHTHOUSE', 'LIGHTHOUSE DECK', 120);
+    console.log(`LAND on the deck: ${res.landed ? 'OK on ' + res.landed.pad : (res.alive ? 'NOT LANDED' : 'DEAD')} hull ${res.hull.toFixed(0)} fuel ${res.fuel.toFixed(0)} touch ${res.crashSpeed.toFixed(2)}`);
+    if (!res.landed) console.log(res.log.slice(-5).map(l => `${l.t}s alt${l.alt} arc${l.arc} vr${l.vr} vt${l.vt}`).join(' | '));
+    // a flare while landed on the deck
+    const fl = await page.evaluate(() => { const sf = window.__sf, w = sf.game.world, p = w.player; sf.forceFlare(); const h0 = p.hull, heat0 = p.heat; for (let t = 0; t < 120 * 32; t++) sf.step(1); return { hull: h0 + ' -> ' + p.hull.toFixed(0), heat: heat0.toFixed(2) + ' -> ' + p.heat.toFixed(2), landed: !!p.landed, flareOver: !w.flare.active, sun: sf.sun(p.pos.x, p.pos.y).toFixed(2) }; });
+    console.log('FLARE while on the deck:', JSON.stringify(fl));
+    // the array's recorder, and whether the deck is named now
+    const found = await page.evaluate(() => window.__sf.places());
+    console.log('found:', found.discovered, '| recorder alive', found.logs.find(l => l.from === 'THE ARRAY').alive);
+    // feed it: bring the Kiln's core onto its socket, then three pings on the peak
+    const fed = await page.evaluate(() => {
+      const sf = window.__sf, w = sf.game.world;
+      const src = w.power.find(q => q.name === 'THE LIGHTHOUSE'); const core = w.pickups.find(k => k.role === 'core' && k.origin === 'THE KILN');
+      const lh = src.body; const c = Math.cos(lh.spinAngle), s = Math.sin(lh.spinAngle);
+      core.pos.x = lh.pos.x + src.socketLocal.x * c - src.socketLocal.y * s; core.pos.y = lh.pos.y + src.socketLocal.x * s + src.socketLocal.y * c; core.vel.x = lh.vel.x; core.vel.y = lh.vel.y;
+      sf.step(30);
+      const out = [];
+      for (let n = 0; n < 3; n++) { let guard = 0; while (Math.abs(((w.time % 3) / 3)) > 0.03 && ((w.time % 3) / 3) < 0.97 && guard++ < 800) sf.step(1); sf.ping(); const t = w.time; for (let i = 0; i < 300; i++) sf.step(1); out.push({ pingedAt: (t % 3 / 3).toFixed(3), onBeat: w.slices.lighthouseOnBeat }); }
+      const enemies = w.ships.filter(q => q.alive && q.faction === 'enemy');
+      return { powered: src.powered, pings: out, stunned: enemies.filter(q => q.stunned > 200).length, of: enemies.length, stillUntil: (w.slices.tideStillUntil - w.time).toFixed(0), journal: sf.journal().map(e => e.text).filter(t => t.includes('ARRAY')), comms: w.comms.slice(-2).map(c => c.text) };
+    });
+    console.log('FED AND SPOKEN TO:', JSON.stringify(fed));
+  },
+
   async fault({ page }) {
     await api.manual(page, true);
     for (const mode of ['still', 'call']) {

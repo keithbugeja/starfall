@@ -26,7 +26,8 @@ Seeds change names, terrain noise, phases and small details, never what is where
   peak, its array stills the whole tide for five minutes.
 - **Home world** (~1900). Two colonies, a mine, the harbour at 3.4 radii, a rock cluster at half the well
   between the Slipway and the harbour, a moon with a mine riding high at 4.6 radii. **The Slipway**
-  (unnamed until found): a dead cruiser in a 130-unit orbit, visible from the harbour, with a full fuel
+  (unnamed until found): a dead cruiser in a 130-unit orbit below the harbour, an unnamed circle on the
+  map and a shape against the world from the launch corridor, with a full fuel
   bunker you can land on, a stern tank that fires if you fill it, a recorder, and 120 units of mass on the
   cable. Pushed into the world it breaks up on whatever lies beneath.
 - **Mid world** (~2800). Colony, mine, THE KILN in its crater, the research station at four radii, and
@@ -40,7 +41,7 @@ Seeds change names, terrain noise, phases and small details, never what is where
   moon with its own plant.
 - **The Fault** (past the enemy world, at the edge). Its ring hugs it now (42 to 100 units) so passing
   worlds cannot strip it; the lens and the beat are as before.
-- **The Pilgrim** appears two minutes in, beyond the outermost world on the clearest line, already falling
+- **The Pilgrim** appears five minutes in, beyond the outermost world on the clearest line, already falling
   at 18 units per second, and hits the star six to seven minutes later unless someone changes that.
 
 ## Space

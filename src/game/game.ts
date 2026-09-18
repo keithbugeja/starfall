@@ -673,7 +673,7 @@ export class Game {
             if (pad.kind === 'core') L.circleWorld(cx, 0.3, -cy, 8 + glow * 3, 12, 1, 0.3, 0.6, 0.1 + 0.35 * glow, 1.2);
           }
         }
-        if (upp < 0.35) {
+        if (upp < 0.35 && (!b.secret || w.discovered.has(b.name))) {
           const lp = padWorldPos(pad, 9);
           const lx = lp.x, ly = lp.y;
           const thr = pad.kind === 'thruster' ? b.thrusters.find(t => t.pad === pad) : null;

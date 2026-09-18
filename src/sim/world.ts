@@ -368,7 +368,7 @@ export interface FoundLog { pickup: Pickup; from: string; lines: string[]; line:
 export function emptySliceState(): SliceState {
   return {
     cutBody: null, cutSource: null, cutFissure: null, regulator: null, cutPowered: true, cutPowerLostAt: -1e9, cutEntered: false,
-    pilgrim: null, pilgrimSaved: false, pilgrimLost: false, pilgrimNextComm: 0, pilgrimCommIdx: 0, pilgrimAnnounced: false, pilgrimSpawnAt: 120, pilgrimLastWarn: -1e9,
+    pilgrim: null, pilgrimSaved: false, pilgrimLost: false, pilgrimNextComm: 0, pilgrimCommIdx: 0, pilgrimAnnounced: false, pilgrimSpawnAt: 300, pilgrimLastWarn: -1e9,
     rock: null, blackBox: null, wreck: null, logPlayed: false, logLine: 0, logNext: 0, beaconNext: 0,
     fault: null, faultOnBeat: 0, faultOffBeat: 0, faultLastPing: -1e9, faultCooldownUntil: -1e9, faultFlash: 0, faultAnswerAt: -1e9, faultAnswerKind: '',
     tideStillUntil: -1e9, tideCalledUntil: -1e9,

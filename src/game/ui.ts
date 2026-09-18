@@ -265,7 +265,7 @@ export function drawMap(g: Game): void {
       const pa = pd.angle + (b.rotates ? b.spinAngle : 0);
       const ax = bx + Math.cos(pa) * (r + 3 * s), ay = by - Math.sin(pa) * (r + 3 * s);
       H.line2(ax, ay, ax + Math.cos(pa) * 4 * s, ay - Math.sin(pa) * 4 * s, pc[0], pc[1], pc[2], 0.9, 2);
-      if (g.mapZoom > 2.2) { drawText(H, pd.kind === 'colony' ? `${pd.name} (${pd.population})` : pd.name, ax + Math.cos(pa) * 12 * s, ay - Math.sin(pa) * 12 * s - 4 * s, 7 * s, pc[0], pc[1], pc[2], 0.85, 'center'); sels.push({ name: pd.name, x: ax, y: ay, nav: { name: pd.name, pad: pd }, col: pc }); }
+      if (g.mapZoom > 2.2 && (!b.secret || w.discovered.has(b.name))) { drawText(H, pd.kind === 'colony' ? `${pd.name} (${pd.population})` : pd.name, ax + Math.cos(pa) * 12 * s, ay - Math.sin(pa) * 12 * s - 4 * s, 7 * s, pc[0], pc[1], pc[2], 0.85, 'center'); sels.push({ name: pd.name, x: ax, y: ay, nav: { name: pd.name, pad: pd }, col: pc }); }
     }
   }
   for (const st of w.stations) {

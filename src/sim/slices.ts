@@ -2,7 +2,7 @@
 // Nothing here is marked on the HUD; the world shows things and the player interprets them.
 import { angleDiff, clamp, TAU, type V2 } from '../engine/math';
 import { addPad, createBody, padWorldAngle, padWorldPos, surfaceVelocity, terrainRadiusAt, type Body, type Pad } from './bodies';
-import { damageBase, gravityAt, inShadow, padDamaged, predictTrajectory, spawnPickup, type Trajectory } from './physics';
+import { damageBase, damageShip, gravityAt, inShadow, padDamaged, predictTrajectory, spawnPickup, type Trajectory } from './physics';
 import { bodyToWorld, fissureFromPath, notchTerrain } from './walls';
 import { comm, sfx, type Pickup, type World } from './world';
 import { addPowerSource, spawnCore } from './power';
@@ -256,7 +256,12 @@ export function stepFreeBodies(w: World, dt: number): void {
       sfx(w, 'bigboom', b.pos, 1, 8);
       w.bodies.splice(bi, 1);
       for (const p of b.pads) { const i = w.pads.indexOf(p); if (i >= 0) w.pads.splice(i, 1); }
-      for (const s of w.ships) if (s.landed && s.landed.body === b) { s.landed = null; if (s === w.player) s.hull = 0; }
+      for (const s of w.ships) if (s.landed && s.landed.body === b) {
+        const n = { x: s.pos.x - b.pos.x, y: s.pos.y - b.pos.y }; const l = Math.hypot(n.x, n.y) || 1;
+        s.landed = null; s.vel.x = b.vel.x + n.x / l * 14; s.vel.y = b.vel.y + n.y / l * 14; s.invuln = 2;
+        damageShip(w, s, 40, 'none', 'explosion');
+        if (s === w.player) comm(w, 'KESTREL', 'THROWN CLEAR. THE HULL IS BREAKING UP UNDER US.', [1, 0.5, 0.3], 3);
+      }
       if (b === w.slices.pilgrim) { w.slices.pilgrimLost = true; comm(w, 'CONTROL', 'THE PILGRIM IS GONE. FOUR THOUSAND SOULS.', [1, 0.35, 0.3], 3); }
     }
   }
