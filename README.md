@@ -1,8 +1,10 @@
 # STARFALL
 
-A space arcade game from a 1982 that never happened. One dense star system, real gravity wells,
-landing on faceted worlds, docking with spinning stations, and a machine tide spreading from a
-fallen star. TypeScript + WebGL2 + Vite, no textures, no external art, all sound synthesised.
+A space arcade game from a 1982 that never happened. One small star system built as a handful of
+places rather than a map: real gravity wells, worlds that turn, landing on faceted terrain, docking
+with spinning stations, a cable, a sensor pulse, and a machine tide spreading from a fallen star.
+TypeScript + WebGL2 + Vite, no textures, no external art, all sound synthesised. This is a vibe
+coding experiment using Fable 5.1.
 
 ## Play
 
@@ -18,6 +20,9 @@ npm run dev
 Open the URL Vite prints (usually http://localhost:5173), press ENTER.
 
 `npm run build` then `npm run preview` serves the production build on http://localhost:4173.
+
+The current build is meant for a blind play session of roughly 45 to 90 minutes. Nothing in it is
+a tutorial beyond the flight manual (H); the rest is there to be noticed.
 
 ## Controls
 
@@ -44,6 +49,22 @@ Open the URL Vite prints (usually http://localhost:5173), press ENTER.
 Gamepad: left stick turns, right trigger thrusts, A fires, B boosts, bumpers strafe, Start pauses,
 Back opens the map.
 
+## The system
+
+The system is authored: five worlds in fixed roles, in a fixed order, with fixed places on them.
+A seed changes names, terrain and timing, never what is where.
+
+- An inner world close enough to the star that guns run hot in daylight and cool at night.
+- A home world with two colonies, a mine, the harbour, a rock cluster and a moon.
+- A middle world with a colony, a mine, a research station, a gun position in a crater, and a
+  quiet listening post on its moon.
+- A gas giant with a refinery low over its drag layer, fuel to scoop, and moons.
+- The enemy world, where the Starfall core and its bases sit on one power grid.
+- A belt, a strange heavy anomaly at the edge of the system, and a few things that are not on the
+  map until you have been there: a shape in orbit near the harbour, a dead station near the star,
+  a rock that answers a scan, a trail of wreckage, and a large silent hull that arrives some minutes
+  in on a bad course.
+
 ## How it works
 
 - Sim runs at a fixed 120 Hz on a 2D ecliptic; everything is rendered in 3D from a near top-down
@@ -51,6 +72,8 @@ Back opens the map.
   surface. What you see is what you hit.
 - The dotted line ahead of the ship is where you will go if you do nothing. The violet arrow is
   gravity. Shots inherit your velocity and bend in gravity.
+- Gravity is real around every world and deep near the star; between worlds it is nearly nothing,
+  so what you leave in orbit stays in orbit.
 - Landing: nose away from the ground, descend under 4.5, drift under 2.6, tilt under 27 degrees.
 - Docking: enter the rotating ring through the gap, touch the hub under 7.
 - The system lives whether or not you look: raids, convoys, sieges, stranded ships, rogue
@@ -62,25 +85,22 @@ Back opens the map.
   fins, and a socket with a core in it, or a feed from the world's grid. Guns need power and heat up
   when they fire. Sensors need power, something to hear, and a clear line of sight. Parts can be
   damaged; slow rocks stay where they fall. Nothing tells you what any of this is for.
+- The enemy only knows what its sensors have seen. A ship with its engines off, its guns silent and
+  nothing pinging is a small target; boosting, firing and scanning carry.
 - The halo around your ship is how loud you are. Brackets around it mean something has you; the tone
   that falls is the moment nothing does. Things in shadow look dark and cool faster.
-- The journal (J) records what you saw, never what it means.
-- The system is a small set of places, the same places every game with different names and faces. Some
-  are on the map. Some you have to notice: a shape in orbit near the harbour, a station near the star,
-  a mast blinking on a dark moon, a trail of wreckage in the belt, a large silent hull falling.
-- Three hand-built situations exist in every system. They are not marked. Look for a crack in the
-  enemy world, a large silent hull that arrives on a bad course, and a signal you can hear before
-  you can see it. A fourth, a gun position in a crater within reach of a colony, is built from the
-  same parts as every other base and is only different in where it stands.
+- Recorders found in the world play back when picked up. The journal (J) records what you saw,
+  never what it means.
 - The run ends when your three hulls are gone, or when you destroy the Starfall core on the
   enemy world (red on the map). Spare hulls come with score. After a win you can keep flying.
 
 ## Development
 
-- `npm test` runs generation and stability invariants (Vitest).
+- `npm test` runs generation and stability invariants over 120 seeds (Vitest).
 - `npm run playtest -- <scenario>` drives the built game in headless Chromium (needs
   `npx playwright install chromium` and a running `npm run preview`). Scenarios: idle, fly, fall,
   land, smoke, dock, combat, raid, approach, tour, keys, launches, assault, gallery, endings,
   upgrades, audio, perf, tetherphys, cut, pilgrim, signal, fault, kiln, living, stealth, brute, flareops,
-  traffic, patrol, conditions. Screenshots land in `playtest/out/`.
-- `DESIGN.md` records the design decisions; `starfall.md` is the original brief.
+  traffic, patrol, conditions, lighthouse. Screenshots land in `playtest/out/`.
+- `DESIGN.md` records the design decisions and the measured numbers behind them; `starfall.md` is
+  the original brief.
