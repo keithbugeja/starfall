@@ -3,7 +3,9 @@
 import { MeshBuilder, type MeshData } from '../engine/mesh';
 import { fbm3, lerp, Rng, TAU, valueNoise3 } from '../engine/math';
 import { surfaceRadius, type Body } from '../sim/bodies';
-import { edgeOpen, pointInPolygon } from '../sim/walls';
+import { edgeInMouth, edgeOpen, pointInPolygon, SLAB_H, MOUTH_ZONE } from '../sim/walls';
+import { triangulate } from '../engine/tri';
+import { terrainRadiusAt } from '../sim/bodies';
 import type { ShipKind, Station } from '../sim/world';
 
 type V3 = number[];
@@ -172,19 +174,21 @@ export function buildPlanetMesh(b: Body): MeshData {
       const nearEq = j === M / 2 - 1 || j === M / 2;
       if (nearEq && padSeg.has(i)) col = padCol;
       if (b.fissures.length) {
-        // the quad's footprint on the plane, in the body's local frame
+        // only a mouth is cut from the dome: the passage behind it stays hidden until the pilot is under the ground
+        const inMouth = (lx: number, ly: number): boolean => {
+          const r = Math.hypot(lx, ly);
+          if (r < terrainRadiusAt(b, Math.atan2(ly, lx) + (b.rotates ? b.spinAngle : 0)) - MOUTH_ZONE) return false;
+          for (const f of b.fissures) if (pointInPolygon(f.outline, lx, ly)) return true;
+          return false;
+        };
         const rq = ((rad[j][i] + rad[j][i1] + rad[j + 1][i1] + rad[j + 1][i]) / 4) * Math.cos(lat);
-        const lx = rq * Math.cos(lon), ly = rq * Math.sin(lon);
-        let cut = false;
-        for (const f of b.fissures) if (pointInPolygon(f.outline, lx, ly)) { cut = true; break; }
+        let cut = inMouth(rq * Math.cos(lon), rq * Math.sin(lon));
         if (!cut) {
-          // also cut quads whose corners fall inside, so the opening is not ragged
           for (const [ci, cj] of [[i, j], [i1, j], [i1, j + 1], [i, j + 1]]) {
             const cl = -Math.PI / 2 + Math.PI * cj / M;
             const cr = rad[cj][ci] * Math.cos(cl);
             const cln = (ci / N) * TAU;
-            for (const f of b.fissures) if (pointInPolygon(f.outline, cr * Math.cos(cln), cr * Math.sin(cln))) { cut = true; break; }
-            if (cut) break;
+            if (inMouth(cr * Math.cos(cln), cr * Math.sin(cln))) { cut = true; break; }
           }
         }
         if (cut) continue;
@@ -209,14 +213,13 @@ export function buildPlanetMesh(b: Body): MeshData {
       mb.triN(0, fy, 0, Math.cos(a1) * rr, fy, -Math.sin(a1) * rr, Math.cos(a0) * rr, fy, -Math.sin(a0) * rr, 0, 1, 0, rc[0], rc[1], rc[2]);
     }
   }
-  // fissures: extruded walls from the floor up to the dome, and a dark floor
+  // fissures seen from outside: the walls of the mouth, from the floor up to the dome
   for (const f of b.fissures) {
     const n = f.outline.length;
-    const wallCol = [pal.low[0] * 0.8, pal.low[1] * 0.8, pal.low[2] * 0.8];
-    const floorCol = [pal.low[0] * 0.35, pal.low[1] * 0.35, pal.low[2] * 0.35];
+    const wallCol = [pal.mid[0] * 0.45, pal.mid[1] * 0.45, pal.mid[2] * 0.45];
     const top = (p: { x: number; y: number }): number => b.oblate * Math.sqrt(Math.max(0, R * R - (p.x * p.x + p.y * p.y))) * 1.03 + 0.6;
     for (let i = 0; i < n; i++) {
-      if (edgeOpen(f, i)) continue;
+      if (edgeOpen(f, i) || !edgeInMouth(f, i)) continue;
       const a = f.outline[i], c = f.outline[(i + 1) % n];
       const ha = top(a), hc = top(c);
       // inward (open side) normal: left of the edge for a counter-clockwise outline, in world-local (x, y, -y) terms
@@ -231,15 +234,6 @@ export function buildPlanetMesh(b: Body): MeshData {
       mb.triN(A[0], A[1], A[2], C[0], C[1], C[2], D[0], D[1], D[2], nx, 0, -ny, col[0], col[1], col[2]);
       mb.triN(A[0], A[1], A[2], C[0], C[1], C[2], B[0], B[1], B[2], nx, 0, -ny, col[0], col[1], col[2]);
       mb.triN(A[0], A[1], A[2], D[0], D[1], D[2], C[0], C[1], C[2], nx, 0, -ny, col[0], col[1], col[2]);
-    }
-    // floor: fan from the centroid (dark, mostly hidden under the dome where it overshoots)
-    let cx = 0, cy = 0;
-    for (const p of f.outline) { cx += p.x; cy += p.y; }
-    cx /= n; cy /= n;
-    for (let i = 0; i < n; i++) {
-      const a = f.outline[i], c = f.outline[(i + 1) % n];
-      mb.triN(cx, f.floorY, -cy, a.x, f.floorY, -a.y, c.x, f.floorY, -c.y, 0, 1, 0, floorCol[0], floorCol[1], floorCol[2]);
-      mb.triN(cx, f.floorY, -cy, c.x, f.floorY, -c.y, a.x, f.floorY, -a.y, 0, 1, 0, floorCol[0], floorCol[1], floorCol[2]);
     }
   }
   // hull greebles: a spine of blocks along the long axis
@@ -499,6 +493,71 @@ export function buildPickupMesh(kind: string): MeshData {
     case 'wreck': box(mb, [0, 0, 0], [3.5, 0.7, 1.2], [0.35, 0.36, 0.4]); box(mb, [1.2, 0.3, 0.8], [1.0, 0.8, 0.8], [0.3, 0.3, 0.32]); break;
     case 'prop': prism(mb, [0, 0, 0], 8, 0.9, 1.4, [0.55, 0.2, 0.6], [1.0, 0.5, 0.9]); prism(mb, [0, 0.9, 0], 4, 0.4, 0.5, [1.0, 0.5, 0.9]); break;
     case 'log': box(mb, [0, 0, 0], [0.7, 0.5, 0.5], [0.9, 0.55, 0.15], [1.0, 0.9, 0.5]); break;
+  }
+  return mb.build();
+}
+
+/** Underground view, part one: the floor of every passage and the walls up to the slab. Drawn instead of the dome while the pilot is under the ground. */
+export function buildCaveMesh(b: Body): MeshData {
+  const mb = new MeshBuilder();
+  const pal = b.palette;
+  const floorY = Math.min(...b.fissures.map(f => f.floorY)) - 0.2;
+  const floorCol = [pal.mid[0] * 0.16, pal.mid[1] * 0.16, pal.mid[2] * 0.18];
+  // the floor: a dark disc under everything (the slab covers it wherever there is rock)
+  const rr = b.maxRadius * 1.02, segs = 72;
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * TAU, a1 = ((i + 1) / segs) * TAU;
+    mb.triN(0, floorY, 0, Math.cos(a1) * rr, floorY, -Math.sin(a1) * rr, Math.cos(a0) * rr, floorY, -Math.sin(a0) * rr, 0, 1, 0, floorCol[0], floorCol[1], floorCol[2]);
+    mb.triN(0, floorY, 0, Math.cos(a0) * rr, floorY, -Math.sin(a0) * rr, Math.cos(a1) * rr, floorY, -Math.sin(a1) * rr, 0, 1, 0, floorCol[0], floorCol[1], floorCol[2]);
+  }
+  // the walls: every solid edge, floor to slab, shaded by which way it faces so a chamber reads as a room
+  const wallCol = [pal.mid[0] * 0.5, pal.mid[1] * 0.5, pal.mid[2] * 0.5];
+  for (const f of b.fissures) {
+    const n = f.outline.length;
+    for (let i = 0; i < n; i++) {
+      if (edgeOpen(f, i)) continue;
+      const a = f.outline[i], c = f.outline[(i + 1) % n];
+      const ex = c.x - a.x, ey = c.y - a.y;
+      const el = Math.hypot(ex, ey) || 1;
+      const nx = -ey / el, ny = ex / el;
+      const shade = 0.8 + 0.35 * Math.abs(nx) + 0.15 * ny;
+      const col = [wallCol[0] * shade, wallCol[1] * shade, wallCol[2] * shade];
+      const A: V3 = [a.x, floorY, -a.y], B: V3 = [c.x, floorY, -c.y], C: V3 = [c.x, SLAB_H, -c.y], D: V3 = [a.x, SLAB_H, -a.y];
+      mb.triN(A[0], A[1], A[2], B[0], B[1], B[2], C[0], C[1], C[2], nx, 0, -ny, col[0], col[1], col[2]);
+      mb.triN(A[0], A[1], A[2], C[0], C[1], C[2], D[0], D[1], D[2], nx, 0, -ny, col[0], col[1], col[2]);
+      mb.triN(A[0], A[1], A[2], C[0], C[1], C[2], B[0], B[1], B[2], nx, 0, -ny, col[0], col[1], col[2]);
+      mb.triN(A[0], A[1], A[2], D[0], D[1], D[2], C[0], C[1], C[2], nx, 0, -ny, col[0], col[1], col[2]);
+    }
+  }
+  return mb.build();
+}
+
+/** Underground view, part two: every passage as a flat polygon just above the slab. Drawn into depth only, so the slab has holes exactly where the void is. */
+export function buildVoidMesh(b: Body): MeshData {
+  const mb = new MeshBuilder();
+  const y = SLAB_H + 0.06;
+  for (const f of b.fissures) {
+    const tri = triangulate(f.outline);
+    for (let k = 0; k < tri.length; k += 3) {
+      const a = f.outline[tri[k]], c = f.outline[tri[k + 1]], d = f.outline[tri[k + 2]];
+      mb.triN(a.x, y, -a.y, c.x, y, -c.y, d.x, y, -d.y, 0, 1, 0, 0, 0, 0);
+      mb.triN(a.x, y, -a.y, d.x, y, -d.y, c.x, y, -c.y, 0, 1, 0, 0, 0, 0);
+    }
+  }
+  return mb.build();
+}
+
+/** Underground view, part three: the rock as one flat slab bounded by the equator profile. Its holes come from the void mask. */
+export function buildSlabMesh(b: Body): MeshData {
+  const mb = new MeshBuilder();
+  const pal = b.palette;
+  const col = [pal.mid[0] * 0.5, pal.mid[1] * 0.5, pal.mid[2] * 0.52];
+  const seg = b.segments;
+  for (let i = 0; i < seg; i++) {
+    const a0 = (i / seg) * TAU, a1 = ((i + 1) / seg) * TAU;
+    const r0 = b.terrain[i], r1 = b.terrain[(i + 1) % seg];
+    mb.triN(0, SLAB_H, 0, Math.cos(a0) * r0, SLAB_H, -Math.sin(a0) * r0, Math.cos(a1) * r1, SLAB_H, -Math.sin(a1) * r1, 0, 1, 0, col[0], col[1], col[2]);
+    mb.triN(0, SLAB_H, 0, Math.cos(a1) * r1, SLAB_H, -Math.sin(a1) * r1, Math.cos(a0) * r0, SLAB_H, -Math.sin(a0) * r0, 0, 1, 0, col[0], col[1], col[2]);
   }
   return mb.build();
 }

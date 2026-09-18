@@ -280,6 +280,49 @@ revoked for the ground itself; what is where at system scale is still authored.
   the playtest driver dies to the harbour ring and freighters on the way out, so `padcheck` (approach
   from forty units up) is the pad test, not `land`.
 
+## Underground as arcade levels (interior pass)
+Human play liked the ground and not the caves: holes cut in the dome, corridors too narrow to turn in,
+a cache at the end. The interior grammar and its rendering were rebuilt; the terrain motifs stayed.
+- **Two views of a body with passages.** From outside the dome is whole except its mouths: a passage is
+  cut from the dome only within twelve units of the rim, walled there, and drawn as a bright notch; the
+  network behind it is invisible until a ping's sweep lights it through the rock. Under the ground the
+  dome is not drawn at all. The rock is one flat slab at 2.6 units above the flight plane bounded by
+  the equator profile; every passage polygon is drawn into the depth buffer just above it first, so the
+  slab has holes exactly where the void is; the void shows a dark floor and walls extruded from the floor
+  to the slab, and every solid edge is drawn as a bright line at the slab. The slab is drawn last, so
+  ships, pads and machinery on the surface are hidden by it for free. The slab carries an emissive tint
+  so the night side stays readable. Entering (in a passage, below the rim) and leaving (above the rim
+  by six) switch the view with a short dip to black; the camera goes straight down and frames a chamber.
+- **Chambers, not corridors.** A complex is a graph: an entry throat, a first chamber under it, then
+  rooms (radius 11 to 16) and halls (17 to 26, capped by the world's size) grown sideways and down, a
+  spanning tree of passages, one or two loops, and a second way out from the shallowest far chamber when
+  the ground above it is clear. Chambers are rough blobs cut flat on the deep side, so every one has a
+  shelf whose normal is radial: a landing floor under the interior gravity. Shafts go straight down to a
+  long low bench with galleries off it; shelters are one room under the rim; tunnels are two chambers
+  with a mouth at each end. Dimensions come from the ship: a reversal from eight units a second costs
+  ten units, a towed rock spans eleven with the cable; broad passages are 13 to 18 wide, squeezes 6.6 to
+  8.4 wide and never first, never twice off one chamber, never more than the broad ways. Passages are
+  polygons that overlap the chambers they join, and the openings rule does the doorways.
+- **Situations, one per chamber, no two alike in a complex.** Workings (ore on the floor, rubble, walls
+  that shed rubble when shot, and a boulder wedged in the squeeze beyond, too big for a Kestrel to pass
+  until it is shot or towed); a stranded hull with salvage and a black box; a fuel dump with a bulk tank;
+  a live plant with a core seated; a gun position on the shelf with its fins and plant beside it, fed by
+  its own core, which is the Kiln's grammar under the ground; a dormant position with an empty socket
+  that wakes if someone seats a core; three dead masts and a beacon; rubble to tow. Interior posts are
+  pads on a floor: polar angle and height point at the shelf, they flatten nothing, launch nothing, do
+  not drive the threat, and stay off the map until the pilot has been in the same passages near them.
+  Rationed: one gun position, one dormant one, one live plant and one array per world.
+- **Physics.** The floor drag inside passages applies only to what rests on a wall, so a rock on a cable
+  flies free through the void; the leak safety net and the openings rule are unchanged.
+- **Measured (40 seeds).** Per cut world: 1.2 complexes, 5.8 chambers (0.7 halls), 4 passages of which
+  0.8 squeezes, 2.8 mouths; chamber radius median 13.4, quartiles 11.6 and 15.2; passage half width
+  median 7.6, minimum 3.3; 65 of 156 networks have a second way out; one validation problem in 80 worlds.
+  The follower flies every chamber of the biggest complex at 5, 7 and 9 units a second with no hull loss
+  on seed 2024 and 12 hull on one seed; no wall rescues in any tour. Frame time under 3 ms underground.
+- **Not done.** Live stranded shuttles under the ground (their AI cannot fly walls) are wreck pickups.
+  The follower autopilot tows a small rock out of a complex on about half its tries and stalls on a
+  size-two rock; a human test of towing is still needed. Only the home and inner worlds are cut.
+
 ## Rendering
 WebGL2, no textures, no external art. Instanced flat-shaded meshes with four-band quantised
 lighting from the star plus a faint camera fill. Lines are screen-space expanded quads with a

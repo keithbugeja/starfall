@@ -203,6 +203,23 @@ export class MeshRenderer {
   remove(m: GpuMesh): void {
     if (this.meshes.delete(m)) m.destroy();
   }
+  /** Draw one mesh's queued instances now. maskOnly writes depth and no colour (a stencil by depth). */
+  drawSingle(m: GpuMesh, viewProj: Float32Array, lightPos: [number, number, number], camPos: [number, number, number], ambient: number, maskOnly = false): void {
+    const gl = this.gl;
+    if (m.instCount === 0) return;
+    this.prog.use();
+    gl.uniformMatrix4fv(this.prog.u('u_viewProj'), false, viewProj);
+    gl.uniform3f(this.prog.u('u_lightPos'), lightPos[0], lightPos[1], lightPos[2]);
+    gl.uniform3f(this.prog.u('u_camPos'), camPos[0], camPos[1], camPos[2]);
+    gl.uniform1f(this.prog.u('u_ambient'), ambient);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.BLEND);
+    if (maskOnly) gl.colorMask(false, false, false, false);
+    m.flush();
+    if (maskOnly) gl.colorMask(true, true, true, true);
+  }
   /** Draw all queued instances of all meshes. */
   flush(viewProj: Float32Array, lightPos: [number, number, number], camPos: [number, number, number], ambient: number): void {
     const gl = this.gl;

@@ -54,10 +54,12 @@ Back opens the map.
 The system is authored: five worlds in fixed roles, in a fixed order, with fixed places on them.
 A seed changes names, terrain and timing, never what is where at system scale. The ground of the
 home and inner worlds is generated: their equators are cut as levels (valleys, ridges, craters,
-canyons, shelves, old excavations) with passages under them (caves with rooms and side branches,
-shafts with galleries, tunnels under ridges, shelters under overhangs), and what is in them is placed
-by the same rules as everything else: settlements, depots, works, wreck fields, old plants with a core
-still seated, caches, stranded hulls, rubble, recorders. Nothing in them is marked.
+canyons, shelves, old excavations) and under them lie complexes of chambers and halls joined by broad
+passages with the odd squeeze, shafts down to worked benches, tunnels with a mouth at each end, and
+shelters under the rim. Every chamber has a shelf to land on. What is in them is placed by the same
+rules as everything else: workings and boulders, stranded hulls, fuel dumps, old plants with a core
+still seated, gun positions on a shelf, dormant positions with an empty socket, dead arrays, rubble to
+tow, recorders. Nothing in them is marked. Under the ground the world is drawn as rock and void.
 
 - An inner world close enough to the star that guns run hot in daylight and cool at night; under its
   ground it is always cold.
@@ -107,8 +109,9 @@ still seated, caches, stranded hulls, rubble, recorders. Nothing in them is mark
   `npx playwright install chromium` and a running `npm run preview`). Scenarios: idle, fly, fall,
   land, smoke, dock, combat, raid, approach, tour, keys, launches, assault, gallery, endings,
   upgrades, audio, perf, tetherphys, cut, pilgrim, signal, fault, kiln, living, stealth, brute, flareops,
-  traffic, patrol, conditions, lighthouse, planets (the cut worlds: screenshots and a flight through the
-  biggest cave; `PLANET_SEED` picks the seed), padcheck (every pad on the cut worlds approached from
-  above), launchcheck, landone. Screenshots land in `playtest/out/`.
+  traffic, patrol, conditions, lighthouse, planets (the cut worlds: screenshots and a flight through
+  every chamber of the biggest complex; `PLANET_SEED` picks the seed, `CAVE_SPEED` the speed), tow (haul
+  a rock out of a complex), gunpost (sit in a gun chamber), padcheck (every pad on the cut worlds
+  approached from above), voidprobe, launchcheck, landone. Screenshots land in `playtest/out/`.
 - `DESIGN.md` records the design decisions and the measured numbers behind them; `starfall.md` is
   the original brief.

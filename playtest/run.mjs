@@ -688,7 +688,7 @@ const FOLLOW_SRC = `
   const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
   const body = bodyName ? w.bodies.find(b => b.name === bodyName) : null;
   const toWorld = (l) => { if (!body) return l; const c = Math.cos(body.rotates ? body.spinAngle : 0), s = Math.sin(body.rotates ? body.spinAngle : 0); return { x: body.pos.x + l.x * c - l.y * s, y: body.pos.y + l.x * s + l.y * c }; };
-  const log = [];
+  const log = [], hits = [];
   let idx = 0, t = 0, stuck = 0;
   const grav = () => sf.gravity(p.pos.x, p.pos.y);
   while (idx < pts.length && t < ticks && p.alive) {
@@ -718,13 +718,15 @@ const FOLLOW_SRC = `
       if (Math.abs(err) < 0.45 && fwd > 0) c.thrust = Math.min(1, fwd * loadK / p.stats.thrust);
     }
     sf.controls(c);
+    const hullBefore = p.hull;
     sf.step(1);
+    if (p.hull < hullBefore - 0.01) hits.push({ t: t / 120, wp: idx, x: p.pos.x, y: p.pos.y, dmg: hullBefore - p.hull, src: p.lastDamageSource });
     t++;
     if (t % 120 === 0) log.push({ t: (t / 120).toFixed(0), wp: idx, d: d.toFixed(1), hull: p.hull.toFixed(0), fuel: p.fuel.toFixed(0), spd: Math.hypot(p.vel.x - refVel.x, p.vel.y - refVel.y).toFixed(1), tension: p.tether ? p.tether.tension.toFixed(0) : '-' });
     if (++stuck > 120 * 25) { log.push({ stuck: idx }); break; }
   }
   sf.controls(null);
-  return { log, reached: idx, of: pts.length, alive: p.alive, hull: p.hull, fuel: p.fuel, ticks: t, tethered: !!p.tether, peak: p.tether ? p.tether.peak : null };
+  return { log, hits, reached: idx, of: pts.length, alive: p.alive, hull: p.hull, fuel: p.fuel, ticks: t, tethered: !!p.tether, peak: p.tether ? p.tether.peak : null };
 `;
 
 async function follow(page, pts, opts = {}) {
@@ -932,29 +934,56 @@ const sliceScenarios = {
     console.log(`landed ${ok}/${n}`);
   },
 
+  async voidprobe({ page }) {
+    // where is the player relative to the Cut's outline, and what does the void mask look like in colour?
+    await api.manual(page, true);
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    const sl = await page.evaluate(() => window.__sf.slice());
+    const path = sl.cut.path;
+    const bodyVel = await page.evaluate(() => { const b = window.__sf.game.world.slices.cutBody; return { x: b.vel.x, y: b.vel.y }; });
+    const ch = path[path.length - 3];
+    await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [ch.x, ch.y, bodyVel.x, bodyVel.y]);
+    await api.run(page, {}, 0.5);
+    const info = await page.evaluate(() => {
+      const g = window.__sf.game, w = g.world, p = w.player, b = w.slices.cutBody, f = w.slices.cutFissure;
+      const c = Math.cos(-b.spinAngle), s = Math.sin(-b.spinAngle);
+      const dx = p.pos.x - b.pos.x, dy = p.pos.y - b.pos.y;
+      const l = { x: dx * c - dy * s, y: dx * s + dy * c };
+      let inside = false; const poly = f.outline;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y; if ((yi > y0(l)) !== (yj > y0(l)) && l.x < ((xj - xi) * (l.y - yi)) / (yj - yi) + xi) inside = !inside; }
+      function y0(v) { return v.y; }
+      const xs = poly.map(v => v.x), ys = poly.map(v => v.y);
+      return { underground: g.underground && g.underground.name, spin: b.spinAngle, local: l, inside, bbox: [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)], n: poly.length, cam: { x: g.camPos.x, y: g.camPos.y, h: g.camHeight, tilt: g.camTilt }, ship: { x: p.pos.x, y: p.pos.y }, body: { x: b.pos.x, y: b.pos.y } };
+    });
+    console.log(JSON.stringify(info));
+    await api.shot(page, 'void_mask_off', 20);
+    await page.evaluate(() => { window.__sf.game.debugVoid = true; });
+    await api.shot(page, 'void_mask_on', 20);
+  },
+
   async planets({ page }) {
-    // the cut worlds: what they look like from above, at a mouth, inside; and whether the autopilot can fly a passage
+    // the cut worlds: from above, at a mouth, and a flight through every chamber of the biggest complex at seven units a second
     await api.manual(page, true);
     const seed = Number(process.env.PLANET_SEED ?? 2024);
+    const speed = Number(process.env.CAVE_SPEED ?? 7);
     await api.newGame(page, seed);
     await api.launch(page);
     const geo = await page.evaluate(() => window.__sf.geo());
     const refresh = async name => (await page.evaluate(() => window.__sf.geo())).find(x => x.name === name);
+    let totalHits = 0;
     for (const g0 of geo) {
       console.log(`${g0.role} ${g0.name} R=${g0.r}: motifs ${g0.motifs.map(m => m.kind).join(',')}`);
       console.log(`   pads: ${g0.pads.map(p => p.kind + ':' + p.name).join(', ')}`);
-      console.log(`   nets: ${g0.networks.map(n => n.name + '[' + n.fissures + 'f ' + n.rooms.length + 'r ' + n.mouths.length + 'm]').join(', ')}; problems ${g0.problems.length} ${g0.problems.join(' / ')}`);
+      console.log(`   nets: ${g0.networks.map(n => `${n.name}[${n.kind} ${n.chambers.length}c ${n.links.length}l ${n.mouths.length}m: ${n.chambers.map(c => c.kind[0] + c.r.toFixed(0) + ':' + c.content).join(',')}]`).join(' | ')}; problems ${g0.problems.length} ${g0.problems.join(' / ')}`);
       console.log(`   placed: ${g0.placed.join('; ')}`);
       let G = await refresh(g0.name);
       const colony = G.pads.find(p => p.kind === 'colony') ?? G.pads[0];
       const a = Math.atan2(colony.y - G.y, colony.x - G.x);
       await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [G.x + Math.cos(a) * (G.r + 42), G.y + Math.sin(a) * (G.r + 42), G.vx, G.vy, a]);
       await api.shot(page, `planet_${g0.role}_colony`, 40);
-      G = await refresh(g0.name);
-      await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [G.x + G.r + 150, G.y, G.vx, G.vy]);
-      await api.shot(page, `planet_${g0.role}_high`, 40);
-      const net = G.networks.slice().sort((p, q) => q.rooms.length - p.rooms.length)[0];
-      if (!net) continue;
+      const net = G.networks.slice().sort((p, q) => q.chambers.length - p.chambers.length)[0];
+      if (!net || !net.chambers.length) continue;
       const mouthA = net.mouths[0] + G.spin;
       const e0 = net.entry[0];
       const c0 = Math.cos(G.spin), s0 = Math.sin(G.spin);
@@ -963,27 +992,140 @@ const sliceScenarios = {
       await page.evaluate(() => window.__sf.ping());
       await api.run(page, {}, 1.0);
       await api.shot(page, `planet_${g0.role}_mouth`, 5);
-      const main = net.points.filter(p => p.fissure === net.name).map(p => p.local);
-      if (main.length >= 2) {
-        const e0 = net.entry[0];
-        const m0 = { x: e0.x + Math.cos(net.mouths[0]) * 14, y: e0.y + Math.sin(net.mouths[0]) * 14 };
-        const t0 = (await api.state(page)).time;
-        const res = await follow(page, [m0, ...net.entry, ...main], { seconds: 150, tol: 2.2, maxSpeed: 4.5, gain: 2.4, body: G.name });
-        const st = await api.state(page);
-        console.log(`   ${net.name}: followed ${res.reached}/${res.of} alive ${res.alive} hull ${res.hull.toFixed(0)} fuel ${res.fuel.toFixed(0)} in ${(st.time - t0).toFixed(0)} s; frame ${st.frameTime.toFixed(1)} ms`);
-        if (res.reached < res.of) console.log('   ', JSON.stringify(res.log.slice(-3)));
-        await api.shot(page, `planet_${g0.role}_inside`, 30);
+      // a route: breadth first over the links from the entry chamber, walking back along the tree between branches
+      const byId = new Map(net.chambers.map(c => [c.id, c]));
+      const adj = new Map(net.chambers.map(c => [c.id, []]));
+      for (const l of net.links) { adj.get(l.a).push(l); adj.get(l.b).push(l); }
+      const seen = new Set();
+      const route = [];
+      const walk = id => {
+        seen.add(id); route.push(byId.get(id).local);
+        for (const l of adj.get(id)) {
+          const o = l.a === id ? l.b : l.a;
+          if (seen.has(o) || l.blocked) continue;
+          for (const q of (l.a === id ? l.pts : l.pts.slice().reverse())) route.push(q.local);
+          walk(o);
+          for (const q of (l.a === id ? l.pts.slice().reverse() : l.pts)) route.push(q.local);
+          route.push(byId.get(id).local);
+        }
+      };
+      walk(net.chambers[0].id);
+      const path = [{ x: e0.x + Math.cos(net.mouths[0]) * 14, y: e0.y + Math.sin(net.mouths[0]) * 14 }, ...net.entry, ...route];
+      const t0 = (await api.state(page)).time;
+      const res = await follow(page, path, { seconds: 240, tol: 3.0, maxSpeed: speed, gain: 2.4, body: G.name });
+      const st = await api.state(page);
+      console.log(`   ${net.name}: ${net.chambers.length} chambers, route ${path.length} waypoints at ${speed} u/s: reached ${res.reached}/${res.of} alive ${res.alive} hull ${res.hull.toFixed(0)} fuel ${res.fuel.toFixed(0)} in ${(st.time - t0).toFixed(0)} s; frame ${st.frameTime.toFixed(1)} ms; underground ${st.underground}`);
+      totalHits += 100 - res.hull;
+      if (res.hits && res.hits.length) {
+        // where the damage happened: the nearest chamber or link, by world position
+        const G2 = await refresh(g0.name);
+        const net2 = G2.networks.find(n => n.name === net.name);
+        const tally = {};
+        for (const h of res.hits) {
+          let best = 'outside', bd = 1e9;
+          for (const c of net2.chambers) { const d = Math.hypot(c.x - h.x, c.y - h.y) - c.r; if (d < bd) { bd = d; best = `${c.kind} r${c.r.toFixed(0)}`; } }
+          for (const l of net2.links) for (let i = 0; i + 1 < l.pts.length; i++) { const a = l.pts[i], b2 = l.pts[i + 1]; const vx = b2.x - a.x, vy = b2.y - a.y; const l2 = vx * vx + vy * vy || 1e-9; let u = ((h.x - a.x) * vx + (h.y - a.y) * vy) / l2; u = Math.max(0, Math.min(1, u)); const d = Math.hypot(h.x - (a.x + vx * u), h.y - (a.y + vy * u)) - l.hw; if (d < bd) { bd = d; best = l.narrow ? `squeeze hw${l.hw.toFixed(1)}` : `passage hw${l.hw.toFixed(1)}`; } }
+          const e = net2.entry; for (const q of e) { const d = Math.hypot(q.x - h.x, q.y - h.y) - 8; if (d < bd) { bd = d; best = 'entry'; } }
+          tally[best] = (tally[best] ?? 0) + h.dmg;
+        }
+        console.log('   damage by place:', Object.entries(tally).map(([k, v]) => `${k} ${v.toFixed(0)}`).join(', '));
       }
+      if (res.reached < res.of) console.log('   ', JSON.stringify(res.log.slice(-3)));
+      await api.shot(page, `planet_${g0.role}_inside`, 30);
+      // the biggest chamber, from its centre
       G = await refresh(g0.name);
-      const room = G.networks.flatMap(n => n.rooms).sort((p, q) => q.depth - p.depth)[0];
-      if (room) {
-        await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [room.x, room.y, G.vx, G.vy]);
+      const hall = G.networks.flatMap(n => n.chambers).sort((p, q) => q.r - p.r)[0];
+      if (hall) {
+        await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [hall.x, hall.y, G.vx, G.vy]);
         await api.run(page, {}, 0.5);
-        await api.shot(page, `planet_${g0.role}_room`, 30);
+        await api.shot(page, `planet_${g0.role}_hall`, 30);
       }
+      // the sun: day or night side where the flight was
+      const sun = await page.evaluate(([x, y]) => window.__sf.sun(x, y), [hall ? hall.x : ex, hall ? hall.y : ey]);
+      console.log(`   sunlight at the hall: ${JSON.stringify(sun)}`);
     }
     const rescues = (await page.evaluate(() => window.__sf.log(0))).filter(e => e.kind === 'wall-rescue');
     console.log('wall rescues during the tour:', rescues.length, rescues.map(r => `${r.t}s ${r.text}`).join(', '));
+  },
+
+  async tow({ page }) {
+    // towing room: latch a rubble rock in a chamber and fly it out of the complex along the route at five units a second
+    await api.manual(page, true);
+    const seed = Number(process.env.PLANET_SEED ?? 2024);
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const geo = await page.evaluate(() => window.__sf.geo());
+    for (const g0 of geo) {
+      const G = (await page.evaluate(() => window.__sf.geo())).find(x => x.name === g0.name);
+      const net = G.networks.filter(n => n.chambers.some(c => c.content === 'rubble' || c.content === 'workings')).sort((p, q) => q.chambers.length - p.chambers.length)[0];
+      if (!net) { console.log(`${g0.role} ${g0.name}: no rubble to tow`); continue; }
+      const ch = net.chambers.find(c => c.content === 'rubble' || c.content === 'workings');
+      // the rock nearest the chamber centre
+      const rock = await page.evaluate(([x, y]) => { const w = window.__sf.game.world; let best = null, bd = 1e9; for (const a of w.asteroids) { if (!a.alive) continue; const d = Math.hypot(a.pos.x - x, a.pos.y - y); if (d < bd) { bd = d; best = { x: a.pos.x, y: a.pos.y, r: a.radius, size: a.size, d }; } } return best; }, [ch.x, ch.y]);
+      if (!rock || rock.d > ch.r + 4) { console.log(`${g0.role} ${g0.name}: no rock near ${ch.kind} ${ch.content}`); continue; }
+      // sit beside the rock, latch, then follow the route back to the mouth and out
+      await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [rock.x + rock.r + 2.5, rock.y, G.vx, G.vy]);
+      await api.run(page, {}, 0.3);
+      const latched = await page.evaluate(() => window.__sf.tether());
+      // route: from this chamber back to the entry along the link tree, then out through the mouth
+      const byId = new Map(net.chambers.map(c => [c.id, c]));
+      const adj = new Map(net.chambers.map(c => [c.id, []]));
+      for (const l of net.links) { adj.get(l.a).push(l); adj.get(l.b).push(l); }
+      const prev = new Map([[net.chambers[0].id, null]]);
+      const queue = [net.chambers[0].id];
+      while (queue.length) { const id = queue.shift(); for (const l of adj.get(id)) { const o = l.a === id ? l.b : l.a; if (!prev.has(o) && !l.blocked) { prev.set(o, { id, l }); queue.push(o); } } }
+      const path = [];
+      let cur = ch.id;
+      while (cur !== null && prev.has(cur)) { const p = prev.get(cur); path.push(byId.get(cur).local); if (!p) break; for (const q of (p.l.b === cur ? p.l.pts.slice().reverse() : p.l.pts)) path.push(q.local); cur = p.id; }
+      const e = net.entry.slice().reverse();
+      const m0 = { x: net.entry[0].x + Math.cos(net.mouths[0]) * 16, y: net.entry[0].y + Math.sin(net.mouths[0]) * 16 };
+      path.push(...e, m0);
+      const t0 = (await api.state(page)).time;
+      const res = await follow(page, path, { seconds: 240, tol: 3.2, maxSpeed: 5, gain: 2.2, body: G.name });
+      const st = await api.state(page);
+      const sl = await page.evaluate(() => window.__sf.slice());
+      const out = await page.evaluate(([bx, by, maxR]) => { const p = window.__sf.game.world.player; return Math.hypot(p.pos.x - bx, p.pos.y - by) - maxR; }, [G.x, G.y, G.maxR]);
+      const rescues = (await page.evaluate(() => window.__sf.log(0))).filter(e => e.kind === 'wall-rescue').length;
+      console.log(`${g0.role} ${g0.name} ${net.name}: latched ${latched} rock size ${rock.size} r ${rock.r.toFixed(1)}; towed ${res.reached}/${res.of} waypoints, alive ${res.alive}, hull ${res.hull.toFixed(0)}, still tethered ${res.tethered}, peak tension ${res.peak}, ${(st.time - t0).toFixed(0)} s, now ${out.toFixed(0)} above the rim, underground ${st.underground}, rescues ${rescues}`);
+      if (res.reached < res.of) console.log('   ', JSON.stringify(res.log.slice(-4)));
+      await api.shot(page, `tow_${g0.role}`, 20);
+      void sl;
+    }
+  },
+
+  async gunpost({ page }) {
+    // a gun position under the ground: sit in its chamber and see whether it shoots, cools, and shows up on the map once found
+    await api.manual(page, true);
+    const seed0 = Number(process.env.PLANET_SEED ?? 2024);
+    let found = 0;
+    for (let k = 0; k < 8 && found < 2; k++) {
+    const seed = seed0 + k;
+    await api.newGame(page, seed);
+    await api.launch(page);
+    const geo = await page.evaluate(() => window.__sf.geo());
+    for (const g0 of geo) {
+      const G = (await page.evaluate(() => window.__sf.geo())).find(x => x.name === g0.name);
+      for (const net of G.networks) for (const ch of net.chambers) {
+        if (ch.content !== 'gun' && ch.content !== 'dead') continue;
+        found++;
+        await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [ch.x, ch.y, G.vx, G.vy]);
+        const before = (await api.state(page)).player.hull;
+        // hover in the middle of the chamber for ten seconds (the follower holds against gravity)
+        const res = await follow(page, [ch.local, { x: ch.local.x + 0.01, y: ch.local.y }], { seconds: 10, tol: 0.001, maxSpeed: 2, gain: 3, body: G.name });
+        const st = await api.state(page);
+        const info = await page.evaluate(([x, y]) => {
+          const w = window.__sf.game.world;
+          const near = w.ships.filter(s => s.alive && s.kind === 'sentinel').map(s => ({ home: s.ai && s.ai.home ? s.ai.home.name : null, heat: s.heat.toFixed(2), jam: s.overheated, target: s.ai && s.ai.target ? s.ai.target.kind : null, d: Math.hypot(s.pos.x - x, s.pos.y - y).toFixed(1), landed: !!s.landed })).filter(q => Number(q.d) < 60);
+          const posts = w.pads.filter(p => p.interior).map(p => ({ name: p.name, alive: p.alive, guns: p.guns, discovered: w.discovered.has(p.name), powered: window.__sf.game.world.power.find(s => s.name === p.name)?.powered ?? null }));
+          return { near, posts, shots: w.projectiles.length };
+        }, [ch.x, ch.y]);
+        const bySrc = {}; for (const h of res.hits || []) bySrc[h.src] = (bySrc[h.src] ?? 0) + h.dmg;
+        console.log(`seed ${seed} ${g0.role} ${g0.name} ${net.name} ${ch.kind} r${ch.r.toFixed(0)} ${ch.content}: hull ${before.toFixed(0)} -> ${st.player.hull.toFixed(0)} in 10 s (${Object.entries(bySrc).map(([k, v]) => k + ' ' + v.toFixed(0)).join(', ') || 'no damage'}); sentinels near ${JSON.stringify(info.near)}; posts ${JSON.stringify(info.posts)}; underground ${st.underground}`);
+        await api.shot(page, `gunpost_${g0.role}_${ch.content}`, 20);
+      }
+    }
+    }
+    if (!found) console.log('no gun position in these seeds');
   },
 
   async cut({ page }) {

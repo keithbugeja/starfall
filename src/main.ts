@@ -158,7 +158,7 @@ const harness = {
         motifs: g.motifs.map(m => ({ kind: m.kind, angle: (m.s0 + m.length / 2) / b.radius })),
         pads: b.pads.map(q => ({ name: q.name, kind: q.kind, angle: q.angle, ...padWorldPos(q, 0) })),
         mouths: g.mouths.map(a => ({ angle: a, ...ang(a) })),
-        networks: g.networks.map(n => ({ name: n.name, fissures: n.fissures.length, mouths: n.mouths, entry: n.entry, rooms: n.rooms.map(r => ({ ...wp(r.centre), local: r.centre, hw: r.hw, depth: r.depth, fissure: r.fissure.name })), points: n.points.map(pt => ({ ...wp(pt.p), local: pt.p, hw: pt.hw, fissure: pt.fissure.name })) })),
+        networks: g.networks.map(n => ({ name: n.name, kind: n.kind, fissures: n.fissures.length, mouths: n.mouths, entry: n.entry, chambers: n.chambers.map(c => ({ id: c.id, ...wp(c.centre), local: c.centre, r: c.r, kind: c.kind, content: c.content, depth: c.depth, shelf: [wp(c.floorA), wp(c.floorB)] })), links: n.links.map(l => ({ a: l.a, b: l.b, hw: l.hw, narrow: l.narrow, blocked: n.blocked.includes(l), pts: l.pts.map(q => ({ ...wp(q), local: q })) })), rooms: n.rooms.map(r => ({ ...wp(r.centre), local: r.centre, hw: r.hw, depth: r.depth, fissure: r.fissure.name })), points: n.points.map(pt => ({ ...wp(pt.p), local: pt.p, hw: pt.hw, fissure: pt.fissure.name })) })),
         placed: g.placed,
         problems: validatePlanet(w, b),
       };
@@ -238,6 +238,7 @@ const harness = {
       frameTime: game.frameTime, frameCount: game.frameCount,
       cam: { x: game.camPos.x, y: game.camPos.y, h: game.camHeight },
       mode: game.mode,
+      underground: game.underground ? game.underground.name : null,
       nav: game.navTarget?.name ?? null,
       pads: w.pads.map(pd => ({ name: pd.name, kind: pd.kind, body: pd.body.name, alive: pd.alive, pop: pd.population, stock: pd.stock, hp: pd.enemyHealth, angle: pd.angle, height: pd.height })),
     };

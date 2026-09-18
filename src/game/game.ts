@@ -9,7 +9,7 @@ import { angleDiff, clamp, damp, hashString, lerp, mat4Ortho, mat4TRS, Rng, TAU,
 import { MeshRenderer, type GpuMesh } from '../engine/mesh';
 import { ParticleSystem, StaticPoints } from '../engine/particles';
 import { PostPipeline } from '../engine/post';
-import { buildAsteroidMesh, buildPickupMesh, buildPlanetMesh, buildShipMesh, buildStarMesh, buildStationMesh, buildStructureMesh } from '../gen/meshes';
+import { buildAsteroidMesh, buildCaveMesh, buildPickupMesh, buildPlanetMesh, buildShipMesh, buildSlabMesh, buildStarMesh, buildStationMesh, buildStructureMesh, buildVoidMesh } from '../gen/meshes';
 import { poweredAt, socketWorld } from '../sim/power';
 import { structureNormal, structurePos } from '../sim/structures';
 import { signature, sunlight } from '../sim/sense';
@@ -21,7 +21,7 @@ import { stepWorld } from '../sim/step';
 import { attach, release, tetherEnd, TETHER_BREAK } from '../sim/tether';
 import { emitPing, PING_COOLDOWN } from '../sim/ping';
 import { tideGlow } from '../sim/slices';
-import { bodyToWorld, edgeOpen } from '../sim/walls';
+import { bodyToWorld, edgeInMouth, edgeOpen, fissureAt, SLAB_H } from '../sim/walls';
 import { undock } from '../sim/stations';
 import { applyUpgrades } from '../sim/upgrades';
 import { comm, sfx, SIM_DT, type Ship, type ShipKind, type World } from '../sim/world';
@@ -54,6 +54,15 @@ export class Game {
   private pickupMeshes = new Map<string, GpuMesh>();
   private structureMeshes = new Map<string, GpuMesh>();
   private stationMeshes = new Map<number, GpuMesh>();
+  // the underground view of a body with passages: its walls and floor, the void as a depth mask, the rock as a slab
+  private caveMeshes = new Map<number, GpuMesh>();
+  private voidMeshes = new Map<number, GpuMesh>();
+  private slabMeshes = new Map<number, GpuMesh>();
+  /** The body whose ground the pilot is under, drawn as rock and void instead of a dome. */
+  underground: Body | null = null;
+  private caveDip = 0;
+  /** Debug: draw the void mask in colour instead of depth only. */
+  debugVoid = false;
   private starfield!: StaticPoints;
   private accumulator = 0;
   private lastFrame = 0;
@@ -142,9 +151,13 @@ export class Game {
     for (const m of this.stationMeshes.values()) this.meshes.remove(m);
     this.stationMeshes.clear();
     if (this.starMesh) this.meshes.remove(this.starMesh);
+    for (const m of [...this.caveMeshes.values(), ...this.voidMeshes.values(), ...this.slabMeshes.values()]) this.meshes.remove(m);
+    this.caveMeshes.clear(); this.voidMeshes.clear(); this.slabMeshes.clear();
+    this.underground = null;
     for (const b of this.world.bodies) {
       if (b.kind === 'star') this.starMesh = this.meshes.create(buildStarMesh(b.radius, b.seed), 1);
       else this.planetMeshes.set(b.id, this.meshes.create(buildPlanetMesh(b), 1));
+      this.buildUnderground(b);
     }
     for (const st of this.world.stations) this.stationMeshes.set(st.id, this.meshes.create(buildStationMesh(st, st.id * 7 + this.world.seed), 1));
     this.particles.clear();
@@ -227,6 +240,7 @@ export class Game {
     } else {
       this.accumulator = 0;
     }
+    this.updateUnderground(dt);
     this.render(dt);
     this.input.endFrame();
     this.frameTime = performance.now() - t0;
@@ -345,6 +359,7 @@ export class Game {
         const old = this.planetMeshes.get(b.id);
         if (old) this.meshes.remove(old);
         this.planetMeshes.set(b.id, this.meshes.create(buildPlanetMesh(b), 1));
+        this.buildUnderground(b);
       }
     }
     if (w.score > this.highScore) { this.highScore = Math.floor(w.score); try { localStorage.setItem('starfall.highscore', String(this.highScore)); } catch { /* ignore */ } }
@@ -399,6 +414,42 @@ export class Game {
       }
       this.camPos.x = p.pos.x; this.camPos.y = p.pos.y;
     }
+  }
+
+  private buildUnderground(b: Body): void {
+    for (const map of [this.caveMeshes, this.voidMeshes, this.slabMeshes]) { const old = map.get(b.id); if (old) { this.meshes.remove(old); map.delete(b.id); } }
+    if (!b.fissures.length) return;
+    this.caveMeshes.set(b.id, this.meshes.create(buildCaveMesh(b), 1));
+    this.voidMeshes.set(b.id, this.meshes.create(buildVoidMesh(b), 1));
+    this.slabMeshes.set(b.id, this.meshes.create(buildSlabMesh(b), 1));
+  }
+
+  /** Under the ground of a body when inside one of its passages below the rim; back outside only once well above the rim. */
+  private updateUnderground(dt: number): void {
+    const w = this.world, p = w.player;
+    let next: Body | null = null;
+    if (p.alive && !p.docked) {
+      const cur = this.underground;
+      for (const b of w.bodies) {
+        if (!b.fissures.length) continue;
+        const d = Math.hypot(p.pos.x - b.pos.x, p.pos.y - b.pos.y);
+        if (d > b.maxRadius + 10) continue;
+        const rim = terrainRadiusAt(b, Math.atan2(p.pos.y - b.pos.y, p.pos.x - b.pos.x));
+        if (d < rim - 1 && fissureAt(b, p.pos.x, p.pos.y)) next = b;
+        else if (cur === b && d < rim + 6) next = b;
+      }
+    }
+    if (next !== this.underground) { this.underground = next; this.caveDip = 1; }
+    this.caveDip = Math.max(0, this.caveDip - dt * 3.2);
+  }
+
+  /** Is a world point under the rock of the body the pilot is under (and so hidden by the slab)? */
+  private underRock(x: number, y: number): boolean {
+    const b = this.underground;
+    if (!b) return false;
+    const d = Math.hypot(x - b.pos.x, y - b.pos.y);
+    if (d > b.maxRadius) return false;
+    return d < terrainRadiusAt(b, Math.atan2(y - b.pos.y, x - b.pos.x)) && !fissureAt(b, x, y);
   }
 
   spawnExplosion(x: number, y: number, size: number, color: number[]): void {
@@ -461,6 +512,12 @@ export class Game {
         const d = Math.hypot(st.pos.x - p.pos.x, st.pos.y - p.pos.y);
         if (d < st.radius * 3) { const k = 1 - d / (st.radius * 3); height = Math.max(height, lerp(height, 62, k)); }
       }
+      if (this.underground) {
+        // under the ground: straight down, framed for a chamber rather than a horizon
+        height = clamp(50 + speed * 0.7, 50, 78);
+        tiltTarget = 0.02;
+        tx = p.pos.x + dir.x * lead * 0.45; ty = p.pos.y + dir.y * lead * 0.45;
+      }
       height = clamp(height, 30, 210);
       if (!p.alive) height = 70;
     }
@@ -500,6 +557,7 @@ export class Game {
       const mesh = b.kind === 'star' ? this.starMesh : this.planetMeshes.get(b.id);
       if (!mesh) continue;
       mat4TRS(m, b.pos.x, 0, -b.pos.y, b.spinAngle, 0, 0, 1, 1, 1);
+      if (this.underground === b) { const cm = this.caveMeshes.get(b.id); if (cm) cm.add(m, 1, 1, 1, 0.3); continue; }
       mesh.add(m, 1, 1, 1, b.kind === 'star' ? 1 : 0);
     }
     for (const a of w.asteroids) {
@@ -551,6 +609,20 @@ export class Game {
       mesh.add(m, 1 + hit, 1, 1, 0);
     }
     this.meshes.flush(cam.viewProj, [star.pos.x, 0, -star.pos.y], [cam.eye[0], cam.eye[1], cam.eye[2]], 0.22);
+    if (this.underground) {
+      // the rock: a slab over everything on the surface, with holes where the passages are (the void written to depth first)
+      const b = this.underground;
+      const vm = this.voidMeshes.get(b.id), sm = this.slabMeshes.get(b.id);
+      if (vm && sm) {
+        mat4TRS(m, b.pos.x, 0, -b.pos.y, b.spinAngle, 0, 0, 1, 1, 1);
+        const light: [number, number, number] = [star.pos.x, 0, -star.pos.y];
+        const eye: [number, number, number] = [cam.eye[0], cam.eye[1], cam.eye[2]];
+        vm.add(m, 1, 0.2, 0.2, 1);
+        this.meshes.drawSingle(vm, cam.viewProj, light, eye, 0.22, !this.debugVoid);
+        sm.add(m, 1, 1, 1, 0.4);
+        this.meshes.drawSingle(sm, cam.viewProj, light, eye, 0.22, false);
+      }
+    }
 
     // ---- vector layer
     this.post.beginVector();
@@ -579,7 +651,7 @@ export class Game {
     this.post.flicker = 0.97 + Math.random() * 0.05;
     const targetFade = 1 - this.overlayDim;
     this.fade = damp(this.fade, targetFade, 12, dt);
-    this.post.fade = this.fade * (w.flare.active ? 1 + 0.25 * w.flare.intensity : 1);
+    this.post.fade = this.fade * (w.flare.active ? 1 + 0.25 * w.flare.intensity : 1) * (1 - 0.8 * this.caveDip);
     // world-space vector lines (limbs, pads, HUD in the world) share the vector layer with the overlay text,
     // so they are drawn dimmer by hand: overlays clear the world-line batch instead
     this.post.vecFade = 1;
@@ -625,7 +697,8 @@ export class Game {
         const ff = w.slices.faultFlash;
         if (ff > 0) L.circleWorld(b.pos.x, 0.05, -b.pos.y, b.radius * 2.2, 48, 1, 0.8, 1, ff * 0.9, 2.5);
       }
-      // fissures: their edges sit on the dome and flash when a ping finds them
+      // passages: under the ground every solid edge is drawn bright at the slab; from outside only the mouths show, and a ping's sweep or flash lights the rest through the rock
+      const under = this.underground === b;
       for (const f of b.fissures) {
         const n = f.outline.length;
         const flash = clamp((f.flashUntil - w.time) / 2.6, 0, 1);
@@ -633,8 +706,8 @@ export class Game {
           if (edgeOpen(f, i)) continue;
           const a = f.outline[i], c = f.outline[(i + 1) % n];
           const wa = bodyToWorld(b, a), wc = bodyToWorld(b, c);
-          const ha = b.oblate * Math.sqrt(Math.max(0, b.radius * b.radius - (a.x * a.x + a.y * a.y))) + 0.5;
-          const hc = b.oblate * Math.sqrt(Math.max(0, b.radius * b.radius - (c.x * c.x + c.y * c.y))) + 0.5;
+          if (under) { L.seg(wa.x, SLAB_H + 0.12, -wa.y, wc.x, SLAB_H + 0.12, -wc.y, pal[0], pal[1], pal[2], 0.8, 1.7); continue; }
+          const mouth = edgeInMouth(f, i);
           let sweep = 0;
           for (const pg of w.pings) {
             const mx = (wa.x + wc.x) / 2, my = (wa.y + wc.y) / 2;
@@ -642,23 +715,34 @@ export class Game {
             if (dd < pg.r && dd > pg.r - 14) sweep = 1;
           }
           const bright = Math.max(flash, sweep);
-          L.seg(wa.x, ha, -wa.y, wc.x, hc, -wc.y, lerp(pal[0], 0.7, bright), lerp(pal[1], 1.0, bright), lerp(pal[2], 1.0, bright), 0.3 + 0.65 * bright, 1.2 + bright);
+          if (!mouth && bright <= 0) continue;
+          const ha = b.oblate * Math.sqrt(Math.max(0, b.radius * b.radius - (a.x * a.x + a.y * a.y))) + 0.5;
+          const hc = b.oblate * Math.sqrt(Math.max(0, b.radius * b.radius - (c.x * c.x + c.y * c.y))) + 0.5;
+          L.seg(wa.x, ha, -wa.y, wc.x, hc, -wc.y, lerp(pal[0], 0.7, bright), lerp(pal[1], 1.0, bright), lerp(pal[2], 1.0, bright), (mouth ? 0.4 : 0) + 0.65 * bright, 1.2 + bright);
         }
       }
       // name label when zoomed out
       if (upp > 0.45 && b.kind !== 'moon' && (!b.secret || w.discovered.has(b.name))) drawTextWorld(L, b.name, b.pos.x, 0.3, -(b.pos.y - b.radius - upp * 14), upp * 10, pal[0], pal[1], pal[2], 0.55, 'center', 1.2);
       const rotOff = b.rotates ? b.spinAngle : 0;
       for (const pad of b.pads) {
+        if (under !== pad.interior) continue; // the surface is under the rock; the floors are under the dome
         const col = padColor(pad.kind, pad.alive);
         const seg = b.segments;
-        const a0 = (pad.segIndex / seg) * TAU + rotOff, a1 = ((pad.segIndex + pad.segCount) / seg) * TAU + rotOff;
-        const r0 = b.terrain[pad.segIndex], r1 = b.terrain[(pad.segIndex + pad.segCount) % seg];
-        const x0 = b.pos.x + Math.cos(a0) * r0, y0 = b.pos.y + Math.sin(a0) * r0;
-        const x1 = b.pos.x + Math.cos(a1) * r1, y1 = b.pos.y + Math.sin(a1) * r1;
+        let x0: number, y0: number, x1: number, y1: number;
+        if (pad.interior) {
+          const c = padWorldPos(pad, 0), nn = padWorldAngle(pad);
+          const tx = -Math.sin(nn), ty = Math.cos(nn);
+          x0 = c.x - tx * pad.halfWidth; y0 = c.y - ty * pad.halfWidth; x1 = c.x + tx * pad.halfWidth; y1 = c.y + ty * pad.halfWidth;
+        } else {
+          const a0 = (pad.segIndex / seg) * TAU + rotOff, a1 = ((pad.segIndex + pad.segCount) / seg) * TAU + rotOff;
+          const r0 = b.terrain[pad.segIndex], r1 = b.terrain[(pad.segIndex + pad.segCount) % seg];
+          x0 = b.pos.x + Math.cos(a0) * r0; y0 = b.pos.y + Math.sin(a0) * r0;
+          x1 = b.pos.x + Math.cos(a1) * r1; y1 = b.pos.y + Math.sin(a1) * r1;
+        }
         const blink = 0.55 + 0.45 * Math.sin(w.time * 3 + pad.id);
         L.seg(x0, 0.3, -y0, x1, 0.3, -y1, col[0], col[1], col[2], 0.9, 2.2);
         const pwa = padWorldAngle(pad);
-        const n = terrainNormalAt(b, pwa);
+        const n = pad.interior ? { x: Math.cos(pwa), y: Math.sin(pwa) } : terrainNormalAt(b, pwa);
         for (const [x, y] of [[x0, y0], [x1, y1]]) {
           L.seg(x, 0.3, -y, x + n.x * 1.6, 0.3, -(y + n.y * 1.6), col[0], col[1], col[2], blink, 1.5);
         }
@@ -673,7 +757,7 @@ export class Game {
             if (pad.kind === 'core') L.circleWorld(cx, 0.3, -cy, 8 + glow * 3, 12, 1, 0.3, 0.6, 0.1 + 0.35 * glow, 1.2);
           }
         }
-        if (upp < 0.35 && (!b.secret || w.discovered.has(b.name))) {
+        if (upp < 0.35 && (!b.secret || w.discovered.has(b.name)) && (!pad.interior || w.discovered.has(pad.name))) {
           const lp = padWorldPos(pad, 9);
           const lx = lp.x, ly = lp.y;
           const thr = pad.kind === 'thruster' ? b.thrusters.find(t => t.pad === pad) : null;
@@ -685,7 +769,7 @@ export class Game {
 
     // ai thrust flames
     for (const s of w.ships) {
-      if (!s.alive || s === p || s.docked || s.thrusting <= 0) continue;
+      if (!s.alive || s === p || s.docked || s.thrusting <= 0 || this.underRock(s.pos.x, s.pos.y)) continue;
       const cx = Math.cos(s.angle), cy = Math.sin(s.angle);
       const len = (s.boosting ? 4 : 1.5 + s.thrusting) * s.radius * (0.8 + Math.random() * 0.4);
       const col = s.faction === 'enemy' ? [1.0, 0.4, 0.3] : [0.8, 0.9, 1.0];
@@ -912,13 +996,14 @@ export class Game {
     // sockets keep the beat while a core sits in them; masts blink while they have power
     for (const src of w.power) {
       const sp = socketWorld(src);
-      if (src.broken) continue;
+      if (src.broken || this.underRock(sp.x, sp.y)) continue;
       const g = src.powered ? tideGlow(w) : 0.08;
       L.circleWorld(sp.x, 0.3, -sp.y, 1.6 + g * 0.5, 8, 1, 0.45, 0.9, 0.12 + 0.5 * g, 1.3);
     }
     for (const sx of w.structures) {
       if (!sx.alive) continue;
       const pp = structurePos(sx), n = structureNormal(sx);
+      if (this.underRock(pp.x, pp.y)) continue;
       if (sx.kind === 'mast') {
         const on = poweredAt(w, sx.body, pp.x, pp.y) && (Math.floor(w.time * 1.5 + sx.id) % 3 === 0);
         if (on) L.circleWorld(pp.x + n.x * 4, 0.4, -(pp.y + n.y * 4), 0.5, 6, 1, 0.3, 0.3, 0.9, 1.5);

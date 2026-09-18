@@ -5,7 +5,9 @@
 import { angleDiff, TAU, type Rng } from '../engine/math';
 import { addPad, recomputeMaxRadius, type Body, type Pad } from './bodies';
 import { addPowerSource, spawnCore } from './power';
-import { addStructure } from './structures';
+import { addStructure, addStructureAt } from './structures';
+import type { V2 } from '../engine/math';
+import { bodyToWorld, circleVsWalls, worldToBody } from './walls';
 import type { World } from './world';
 
 /** Fit a base with its machinery. gridFed bases draw from a body-wide source and get no plant. */
@@ -22,6 +24,37 @@ export function equipBase(w: World, pad: Pad, gridFed: boolean, rng: Rng, opts: 
     const src = addPowerSource(w, b, socket, 48, pad.name, plant);
     spawnCore(w, src);
   }
+}
+
+/**
+ * The same kit on a floor under the ground: the pad sits on a chamber's shelf, its mast, fins and plant
+ * stand along the shelf either side. withCore false leaves the socket empty: a dormant position that
+ * wakes when someone seats a core in it.
+ */
+export function equipInteriorBase(w: World, pad: Pad, along: V2, withCore: boolean, reach = 12): void {
+  const b = pad.body;
+  const n = pad.normalLocal!;
+  const base = { x: Math.cos(pad.angle) * pad.height, y: Math.sin(pad.angle) * pad.height };
+  const at = (u: number, lift: number): V2 => ({ x: base.x + along.x * u + n.x * lift, y: base.y + along.y * u + n.y * lift });
+  // reach: how far along the shelf either side of the pad there is floor; a piece that would stand in the wall moves in toward the pad, then up off the floor
+  const fit = (u: number, lift: number, radius: number): V2 => {
+    for (const [du, dl] of [[0, 0], [-1.5, 0], [-3, 0], [0, 2.5], [-1.5, 2.5], [0, 5]]) {
+      const l = at(u + Math.sign(u) * du, lift + dl);
+      const wp = bodyToWorld(b, l);
+      const { hit, inside } = circleVsWalls(b, wp.x, wp.y, radius + 0.3);
+      if (inside && !hit) return l;
+    }
+    const l = at(u * 0.5, lift + 4);
+    const wp = bodyToWorld(b, l);
+    return worldToBody(b, wp.x, wp.y);
+  };
+  const m = Math.min(pad.halfWidth + 2.8, reach - 2.6);
+  pad.radiator = addStructureAt(w, b, 'radiator', fit(-m, 1.1, 1.8), n, pad, `${pad.name} RADIATOR`);
+  const plant = addStructureAt(w, b, 'plant', fit(m, 1.0, 1.6), n, pad, `${pad.name} PLANT`);
+  pad.plant = plant;
+  const socket = { x: plant.local.x + n.x * 1.3, y: plant.local.y + n.y * 1.3 };
+  const src = addPowerSource(w, b, socket, 48, pad.name, plant, !withCore);
+  if (withCore) spawnCore(w, src);
 }
 
 /** THE KILN: a base in a shallow crater within gun reach of a colony, on the terminator at first light. */

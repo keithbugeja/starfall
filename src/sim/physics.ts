@@ -530,9 +530,12 @@ export function stepAsteroids(w: World, dt: number): void {
         if (inside) {
           if (hit) { a.pos.x += hit.nx * hit.pen; a.pos.y += hit.ny * hit.pen; }
           fissureBounce(b, a.pos.x, a.pos.y, a.radius * 0.7, a.vel, 0.3);
-          const fsv = surfaceVelocity(b, a.pos.x, a.pos.y);
-          const kf = Math.max(0, 1 - 1.5 * dt);
-          a.vel.x = fsv.x + (a.vel.x - fsv.x) * kf; a.vel.y = fsv.y + (a.vel.y - fsv.y) * kf;
+          if (hit) {
+            // resting on a wall: the floor takes the speed out of it; in the void it flies free (a towed rock towed)
+            const fsv = surfaceVelocity(b, a.pos.x, a.pos.y);
+            const kf = Math.max(0, 1 - 1.5 * dt);
+            a.vel.x = fsv.x + (a.vel.x - fsv.x) * kf; a.vel.y = fsv.y + (a.vel.y - fsv.y) * kf;
+          }
           continue;
         }
       }
@@ -651,9 +654,12 @@ export function stepPickups(w: World, dt: number): void {
         const { hit } = circleVsWalls(b, p.pos.x, p.pos.y, p.radius * 0.7);
         if (hit) { p.pos.x += hit.nx * hit.pen; p.pos.y += hit.ny * hit.pen; }
         fissureBounce(b, p.pos.x, p.pos.y, p.radius * 0.7, p.vel, 0.25);
-        const fsv = surfaceVelocity(b, p.pos.x, p.pos.y);
-        const kf = Math.max(0, 1 - 1.5 * dt);
-        p.vel.x = fsv.x + (p.vel.x - fsv.x) * kf; p.vel.y = fsv.y + (p.vel.y - fsv.y) * kf;
+        if (hit || p.tetheredBy === null) {
+          // on a wall, or loose: the floor takes the speed out of it; on a cable in the void it follows the cable
+          const fsv = surfaceVelocity(b, p.pos.x, p.pos.y);
+          const kf = Math.max(0, 1 - (hit ? 1.5 : 0.35) * dt);
+          p.vel.x = fsv.x + (p.vel.x - fsv.x) * kf; p.vel.y = fsv.y + (p.vel.y - fsv.y) * kf;
+        }
         continue;
       }
       const ang = Math.atan2(dy, dx);

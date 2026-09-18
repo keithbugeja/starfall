@@ -68,7 +68,7 @@ export function spawnAiShip(w: World, kind: ShipKind, faction: Faction, x: numbe
 export function spawnSentinel(w: World, pad: Pad, slot = 0): Ship {
   const b = pad.body;
   const wa = padWorldAngle(pad);
-  const n = terrainNormalAt(b, wa);
+  const n = pad.interior && pad.normalLocal ? (b.rotates ? rotateVec(pad.normalLocal, b.spinAngle) : pad.normalLocal) : terrainNormalAt(b, wa);
   const base = padWorldPos(pad, 1.3);
   const off = (slot - (pad.guns - 1) / 2) * 2.4;
   const x = base.x - n.y * off, y = base.y + n.x * off;

@@ -20,13 +20,14 @@ export interface PowerSource {
   broken: boolean;       // housing cracked: nothing seats here again
   lostAt: number;
   plant: Structure | null;
+  dormant: boolean;   // built without a core on purpose: nothing is wrong with it, it is simply empty
 }
 
 export const SEAT_RANGE = 4;   // a core this close to the socket is seated
 export const MAGNET_RANGE = 6; // the socket draws a loose core home from this far
 
-export function addPowerSource(w: World, body: Body, socketLocal: V2, range: number, name: string, plant: Structure | null = null): PowerSource {
-  const src: PowerSource = { id: w.nextId++, name, body, socketLocal, range, core: null, powered: false, broken: false, lostAt: -1e9, plant };
+export function addPowerSource(w: World, body: Body, socketLocal: V2, range: number, name: string, plant: Structure | null = null, dormant = false): PowerSource {
+  const src: PowerSource = { id: w.nextId++, name, body, socketLocal, range, core: null, powered: false, broken: false, lostAt: -1e9, plant, dormant };
   w.power.push(src);
   return src;
 }

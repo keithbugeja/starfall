@@ -56,6 +56,7 @@ describe('system generation', () => {
       // pads: flat chord, not overlapping another pad on the same body
       for (const b of w.bodies) {
         for (const p of b.pads) {
+          if (p.interior) continue;
           const seg = b.segments;
           const i0 = p.segIndex;
           for (let k = 0; k <= p.segCount; k++) expect(Math.abs(b.terrain[i0] - b.terrain[(i0 + k) % seg])).toBeLessThan(1e-6);
@@ -83,7 +84,7 @@ describe('system generation', () => {
       // every enemy base carries the same kit; the Kiln has a plant with a seated core; the enemy world's bases draw from the Cut's socket
       const bases = w.pads.filter(p => p.kind === 'enemybase' || p.kind === 'core');
       for (const p of bases) {
-        expect(p.mast && p.mast.alive).toBeTruthy();
+        if (!p.interior) expect(p.mast && p.mast.alive).toBeTruthy();
         if (p.name !== 'THE RELAY') expect(p.radiator && p.radiator.alive).toBeTruthy(); else expect(p.radiator).toBeNull();
         const grid = w.power.some(src => src.body === p.body && src.range === Infinity);
         if (grid) expect(p.plant).toBeNull(); else expect(p.plant && p.plant.alive).toBeTruthy();
@@ -91,7 +92,7 @@ describe('system generation', () => {
       const kiln = w.pads.find(p => p.name === 'THE KILN');
       expect(kiln).toBeTruthy();
       expect(kiln!.guns).toBe(2);
-      for (const src of w.power) { if (src.name === 'THE LIGHTHOUSE') { expect(src.core).toBeNull(); continue; } expect(src.powered && src.core && src.core.alive).toBeTruthy(); }
+      for (const src of w.power) { if (src.name === 'THE LIGHTHOUSE' || src.dormant) { expect(src.core).toBeNull(); continue; } expect(src.powered && src.core && src.core.alive).toBeTruthy(); }
       // the authored places exist and are unnamed until found
       for (const name of ['THE SLIPWAY', 'THE LIGHTHOUSE', 'HOLLOW']) { const b = w.bodies.find(x => x.name === name)!; expect(b).toBeTruthy(); expect(b.secret).toBe(true); }
       expect(w.pads.find(p => p.name === 'THE RELAY')!.guns).toBe(0);
@@ -106,7 +107,7 @@ describe('system generation', () => {
         const ang = Math.atan2(st.local.y, st.local.x);
         if (b.fissures.length && fissureAt(b, b.pos.x + st.local.x, b.pos.y + st.local.y)) continue;
         expect(Math.abs(r - terrainRadiusAt(b, ang))).toBeLessThan(st.radius + 0.5);
-        for (const pd of b.pads) expect(Math.abs(Math.atan2(Math.sin(ang - pd.angle), Math.cos(ang - pd.angle))) * b.radius).toBeGreaterThan(pd.halfWidth + 1);
+        for (const pd of b.pads) if (!pd.interior) expect(Math.abs(Math.atan2(Math.sin(ang - pd.angle), Math.cos(ang - pd.angle))) * b.radius).toBeGreaterThan(pd.halfWidth + 1);
       }
       // worlds turn
       for (const b of w.bodies) if (b.kind === 'planet' && b.name !== 'THE FAULT' && b.name !== 'HOLLOW') { expect(b.rotates).toBe(true); expect(Math.abs(b.spin)).toBeGreaterThan(0.004); }
@@ -120,7 +121,7 @@ describe('system generation', () => {
         const g = [...w.bodies].map(b => GEOGRAPHY.get(b)).find(x => x && x.role === role)!;
         expect(g).toBeTruthy();
         expect(g.motifs.length).toBeGreaterThan(6);
-        expect(g.networks.length).toBeGreaterThanOrEqual(1);
+        expect(g.networks.filter(n => n.chambers.length >= 2).length).toBeGreaterThanOrEqual(1);
         expect(g.placed.length).toBeGreaterThanOrEqual(3);
       }
       // asteroids start outside bodies

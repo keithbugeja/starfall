@@ -35,6 +35,8 @@ export interface Pad {
   plant: Structure | null;    // local power plant (null when fed from the body's grid)
   radiator: Structure | null; // sheds the heat of the base's guns
   mast: Structure | null;     // long-range sensor
+  interior: boolean;          // stands on a floor inside a passage, not on the surface: no chord, no launches, unmarked until found
+  normalLocal: V2 | null;     // interior pads: the floor's outward normal in the body frame
 }
 
 export interface Orbit {
@@ -223,7 +225,7 @@ export function addPad(b: Body, kind: PadKind, name: string, angle: number, half
     id: nextPadId++, body: b, kind, name, angle: centre, segIndex: idx, segCount: count, height: h, halfWidth,
     alive: true, population: 0, stock: 0, fuel: false, repair: false, visited: false, lastRaid: -1e9,
     enemyHealth: 0, spawnTimer: 0, discovered: false, integrity: 100,
-    guns: 1, plant: null, radiator: null, mast: null,
+    guns: 1, plant: null, radiator: null, mast: null, interior: false, normalLocal: null,
   };
   b.pads.push(pad);
   for (let k = 0; k <= count; k++) b.terrain[(i0 + k) % seg] = h;
@@ -233,6 +235,21 @@ export function addPad(b: Body, kind: PadKind, name: string, angle: number, half
   if (b.terrain[im] > maxN) b.terrain[im] = maxN;
   if (b.terrain[ip] > maxN) b.terrain[ip] = maxN;
   recomputeMaxRadius(b);
+  return pad;
+}
+
+/** A pad on a floor inside a passage: its polar angle and height point at the floor, it flattens no terrain. */
+export function addInteriorPad(b: Body, kind: PadKind, name: string, local: V2, normalLocal: V2, halfWidth: number): Pad {
+  const seg = b.segments;
+  const angle = Math.atan2(local.y, local.x);
+  const idx = Math.floor((((angle / TAU) * seg) + 1e-6 + seg * 4) % seg);
+  const pad: Pad = {
+    id: nextPadId++, body: b, kind, name, angle, segIndex: idx, segCount: 0, height: Math.hypot(local.x, local.y), halfWidth,
+    alive: true, population: 0, stock: 0, fuel: false, repair: false, visited: false, lastRaid: -1e9,
+    enemyHealth: 0, spawnTimer: 1e9, discovered: false, integrity: 100,
+    guns: 1, plant: null, radiator: null, mast: null, interior: true, normalLocal: { x: normalLocal.x, y: normalLocal.y },
+  };
+  b.pads.push(pad);
   return pad;
 }
 

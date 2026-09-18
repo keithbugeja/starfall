@@ -179,7 +179,7 @@ export function generateSystem(seed: number, seedName: string): World {
   const kiln = midColony ? authorKiln(w, mid.body, midColony, instRng) : null;
   for (const b of w.bodies) for (const p of b.pads) if (p !== kiln) w.pads.push(p);
   // every base gets the same machinery: a mast, radiator fins, and a plant unless the world's grid feeds it
-  for (const p of w.pads) if ((p.kind === 'enemybase' || p.kind === 'core') && p !== kiln) equipBase(w, p, p.body === enemy.body, instRng, { radiator: p !== relayPad });
+  for (const p of w.pads) if ((p.kind === 'enemybase' || p.kind === 'core') && p !== kiln && !p.interior) equipBase(w, p, p.body === enemy.body, instRng, { radiator: p !== relayPad });
 
   // ---------------- stations
   /** Pick a station orbit radius around a parent that stays clear of its moons' orbits. */

@@ -1,8 +1,9 @@
 // One simulation tick, shared by the game and the tests. The game composes controls and consumes
 // effects; everything that changes world state happens here.
+import { fissureAt } from './walls';
 import type { Controls } from '../engine/input';
 import { aiFire, pruneShips, updateAi } from './ai';
-import { updateOrbits } from './bodies';
+import { updateOrbits, padWorldPos } from './bodies';
 import { updateDirector } from './director';
 import { applyModule, collide, fireWeapon, stepAsteroids, stepPickups, stepProjectiles, stepShip } from './physics';
 import { updatePings } from './ping';
@@ -63,6 +64,8 @@ export function stepWorld(w: World, c: Controls, dt: number, opts: StepOptions):
   // secret places are named once the pilot has been near them or a ping has come back from them
   if ((w.tick & 15) === 0) for (const b of w.bodies) if (b.secret && !w.discovered.has(b.name) && Math.hypot(b.pos.x - w.player.pos.x, b.pos.y - w.player.pos.y) < b.maxRadius * 3 + 80) w.discovered.add(b.name);
   for (const ev of w.pingEvents) if (ev.body.secret) w.discovered.add(ev.body.name);
+  // a gun position or works under the ground is on the map once the pilot has been in the same passages near it
+  if ((w.tick & 15) === 8) for (const pd of w.pads) if (pd.interior && !pd.discovered && fissureAt(pd.body, w.player.pos.x, w.player.pos.y)) { const pp = padWorldPos(pd, 0); if (Math.hypot(pp.x - w.player.pos.x, pp.y - w.player.pos.y) < 70) { pd.discovered = true; w.discovered.add(pd.name); } }
   updateSlices(w, dt);
   updatePlayerSensing(w);
   updateJournal(w, dt);

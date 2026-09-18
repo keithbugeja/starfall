@@ -73,11 +73,12 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
   if (w.gameOver) return;
   // threat grows with time and with the number of enemy bases; falls when bases die
   const bases = enemyBases(w);
-  w.threat += dt * (1 / 95) * (1 + bases.length * 0.15);
+  w.threat += dt * (1 / 95) * (1 + bases.filter(b => !b.interior).length * 0.15);
   if (w.coreDestroyed) w.threat = Math.max(0, w.threat - dt * 0.05);
 
-  // bases spawn waves
+  // bases spawn waves (a gun position under the ground launches nothing)
   for (const b of bases) {
+    if (b.interior) continue;
     b.spawnTimer -= dt;
     if (b.spawnTimer <= 0) {
       b.spawnTimer = Math.max(45, 120 - w.threat * 6) + w.rng.next() * 30;

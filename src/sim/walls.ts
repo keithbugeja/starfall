@@ -4,7 +4,12 @@
 // overlap: where they do, the shared stretches of outline are openings, and a point in the overlap
 // is inside both, so every wall query looks at every passage the point is in.
 import { TAU, type V2 } from '../engine/math';
-import type { Body } from './bodies';
+import { terrainRadiusAt, type Body } from './bodies';
+
+/** Height of the rock slab drawn over a body's interior when the player is under its ground. Ships fly at 0. */
+export const SLAB_H = 2.6;
+/** Depth below the local rim within which a passage counts as its mouth: cut from the dome and walled when seen from outside. */
+export const MOUTH_ZONE = 12;
 
 export interface Fissure {
   name: string;
@@ -15,6 +20,20 @@ export interface Fissure {
   fragile: boolean;   // shots on these walls shed rubble
   openEdge: number;   // index of the edge that is the mouth (no wall there), -1 if closed
   open: boolean[];    // per edge: true where there is no wall (the mouth, or a join into another passage)
+  depth: number[];    // per vertex: how far under the local ground it lies (negative above the rim); filled by markOpenings
+}
+
+/** Depth of every outline vertex under the ground above it (the polar rim at that angle). */
+export function computeDepths(b: Body): void {
+  const spin = b.rotates ? b.spinAngle : 0;
+  for (const f of b.fissures) f.depth = f.outline.map(v => terrainRadiusAt(b, Math.atan2(v.y, v.x) + spin) - Math.hypot(v.x, v.y));
+}
+
+/** Is edge i of a fissure part of its mouth (both ends within the mouth zone of the rim)? */
+export function edgeInMouth(f: Fissure, i: number): boolean {
+  if (f.depth.length !== f.outline.length) return false;
+  const n = f.outline.length;
+  return f.depth[i] < MOUTH_ZONE && f.depth[(i + 1) % n] < MOUTH_ZONE;
 }
 
 /** Is edge i of a fissure an opening rather than a wall? */
@@ -70,6 +89,7 @@ export function markOpenings(b: Body): void {
       for (const g of b.fissures) { if (g === f) continue; if (pointInPolygon(g.outline, mx + ox, my + oy) && pointInPolygon(g.outline, mx - ox, my - oy)) { f.open[i] = true; break; } }
     }
   }
+  computeDepths(b);
 }
 
 /** Safety net: a world point that is under the ground of a body with passages but in none of them is moved into the nearest passage. */
@@ -272,7 +292,7 @@ export function fissureFromPath(b: Body, name: string, mouthAngle: number, rimRa
   let area = 0;
   for (let i = 0; i < outline.length; i++) { const a = outline[i], c = outline[(i + 1) % outline.length]; area += a.x * c.y - c.x * a.y; }
   if (area < 0) outline.reverse();
-  const f: Fissure = { name, body: b, outline, floorY, flashUntil: -1e9, fragile, openEdge: outline.length - 1, open: [] };
+  const f: Fissure = { name, body: b, outline, floorY, flashUntil: -1e9, fragile, openEdge: outline.length - 1, open: [], depth: [] };
   b.fissures.push(f);
   return f;
 }
@@ -326,7 +346,7 @@ export function fissureFromPolyline(b: Body, name: string, pts: V2[], hws: numbe
   const open: boolean[] = new Array(outline.length).fill(false);
   if (openStart) open[startEdge] = true;
   if (openEnd) open[endIdx] = true;
-  const f: Fissure = { name, body: b, outline, floorY, flashUntil: -1e9, fragile, openEdge: openStart ? startEdge : -1, open };
+  const f: Fissure = { name, body: b, outline, floorY, flashUntil: -1e9, fragile, openEdge: openStart ? startEdge : -1, open, depth: [] };
   b.fissures.push(f);
   return f;
 }

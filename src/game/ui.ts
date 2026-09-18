@@ -261,6 +261,7 @@ export function drawMap(g: Game): void {
     if (named) sels.push({ name: b.name, x: bx, y: by, nav: { name: b.name, body: b }, col });
     // pads as ticks around the body
     for (const pd of b.pads) {
+      if (pd.interior && !w.discovered.has(pd.name)) continue;
       const pc = padColor(pd.kind, pd.alive);
       const pa = pd.angle + (b.rotates ? b.spinAngle : 0);
       const ax = bx + Math.cos(pa) * (r + 3 * s), ay = by - Math.sin(pa) * (r + 3 * s);
