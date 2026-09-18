@@ -81,6 +81,7 @@ export class Game {
   private fade = 1;
   private titleOrbit = 0;
   muted = false;
+  private fireSecondary = false;
 
   constructor(public canvas: HTMLCanvasElement) {
     this.gl = createGL(canvas);
@@ -119,11 +120,11 @@ export class Game {
 
   newGame(seed: number, seedName: string): void {
     this.world = generateSystem(seed, seedName);
-    for (const m of this.planetMeshes.values()) this.meshes.meshes.delete(m);
+    for (const m of this.planetMeshes.values()) this.meshes.remove(m);
     this.planetMeshes.clear();
-    for (const m of this.stationMeshes.values()) this.meshes.meshes.delete(m);
+    for (const m of this.stationMeshes.values()) this.meshes.remove(m);
     this.stationMeshes.clear();
-    if (this.starMesh) this.meshes.meshes.delete(this.starMesh);
+    if (this.starMesh) this.meshes.remove(this.starMesh);
     for (const b of this.world.bodies) {
       if (b.kind === 'star') this.starMesh = this.meshes.create(buildStarMesh(b.radius, b.seed), 1);
       else this.planetMeshes.set(b.id, this.meshes.create(buildPlanetMesh(b), 1));
@@ -195,6 +196,7 @@ export class Game {
     this.lastFrame = now;
     if (dt > 0.1) dt = 0.1;
     this.input.pollGamepad();
+    this.handleGlobalKeys();
     const simRuns = (this.mode === 'flight' || this.mode === 'docked' || this.mode === 'gameover' || this.mode === 'title') && !this.manual;
     if (simRuns) {
       this.accumulator += dt;
@@ -208,7 +210,6 @@ export class Game {
     } else {
       this.accumulator = 0;
     }
-    this.handleGlobalKeys();
     this.render(dt);
     this.input.endFrame();
     this.frameTime = performance.now() - t0;
@@ -217,11 +218,12 @@ export class Game {
 
   private handleGlobalKeys(): void {
     const inp = this.input;
-    if (inp.wasPressed('Digit0')) { this.muted = !this.muted; this.audio.setMuted(this.muted); }
+    if (inp.wasPressed('Digit0') && this.mode !== 'title') { this.muted = !this.muted; this.audio.setMuted(this.muted); }
+    if (this.mode === 'flight' && (inp.wasPressed('KeyX') || inp.wasPressed('GP2'))) this.fireSecondary = true;
     if (this.mode === 'flight') {
-      if (inp.wasPressed('KeyM') || inp.wasPressed('GP8')) { this.mapReturn = 'flight'; this.mode = 'map'; sfx(this.world, 'ui'); }
-      else if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { this.helpReturn = 'flight'; this.mode = 'help'; }
-      else if (inp.wasPressed('Escape') || inp.wasPressed('KeyP') || inp.wasPressed('GP9')) { this.mode = 'pause'; }
+      if (inp.wasPressed('KeyM') || inp.wasPressed('GP8')) { this.mapReturn = 'flight'; this.mode = 'map'; sfx(this.world, 'ui'); inp.consume('KeyM'); inp.consume('GP8'); }
+      else if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { this.helpReturn = 'flight'; this.mode = 'help'; inp.consume('KeyH'); inp.consume('F1'); }
+      else if (inp.wasPressed('Escape') || inp.wasPressed('KeyP') || inp.wasPressed('GP9')) { this.mode = 'pause'; inp.consume('Escape'); inp.consume('KeyP'); inp.consume('GP9'); }
       else if (inp.wasPressed('Tab') || inp.wasPressed('KeyN') || inp.wasPressed('GP3')) this.cycleNav();
       else if (inp.wasPressed('KeyC')) this.navTarget = null;
     }
@@ -276,7 +278,8 @@ export class Game {
     stepShip(w, p, c, dt);
     if (p.fireCooldown > 0) p.fireCooldown -= dt;
     if (c.fire && p.alive && !p.landed && !p.docked && !p.boosting && this.mode === 'flight') fireWeapon(w, p, p.weapon);
-    if (this.input.wasPressed('KeyX') || this.input.wasPressed('GP2')) {
+    if (this.fireSecondary) {
+      this.fireSecondary = false;
       if (p.secondary && p.alive && !p.docked && !p.landed) {
         const tgt = nearestEnemyShip(w, 400);
         const cd = p.fireCooldown; p.fireCooldown = 0;
@@ -317,7 +320,7 @@ export class Game {
       if (bb.meshDirty) {
         bb.meshDirty = false;
         const old = this.planetMeshes.get(b.id);
-        if (old) this.meshes.meshes.delete(old);
+        if (old) this.meshes.remove(old);
         this.planetMeshes.set(b.id, this.meshes.create(buildPlanetMesh(b), 1));
       }
     }

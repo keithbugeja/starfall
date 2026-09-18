@@ -150,10 +150,10 @@ export function generateSystem(seed: number, seedName: string): World {
   {
     const a = spreadAngles(3, rng);
     const core = addPad(enemy.body, 'core', 'THE STARFALL', a[0], 6);
-    core.enemyHealth = 1400; core.spawnTimer = 30;
+    core.enemyHealth = 800; core.spawnTimer = 30;
     w.enemyCore = core;
-    for (let i = 1; i < 3; i++) { const b = addPad(enemy.body, 'enemybase', `BASE ${i === 1 ? 'KILO' : 'LIMA'}`, a[i], 5); b.enemyHealth = 420; b.spawnTimer = 20 + i * 15; }
-    for (const m of enemy.moons) { const b = addPad(m, 'enemybase', 'BASE MIKE', rng.next() * TAU, 5); b.enemyHealth = 320; b.spawnTimer = 40; }
+    for (let i = 1; i < 3; i++) { const b = addPad(enemy.body, 'enemybase', `BASE ${i === 1 ? 'KILO' : 'LIMA'}`, a[i], 5); b.enemyHealth = 240; b.spawnTimer = 20 + i * 15; }
+    for (const m of enemy.moons) { const b = addPad(m, 'enemybase', 'BASE MIKE', rng.next() * TAU, 5); b.enemyHealth = 200; b.spawnTimer = 40; }
   }
   for (const b of w.bodies) for (const p of b.pads) w.pads.push(p);
 
@@ -161,7 +161,8 @@ export function generateSystem(seed: number, seedName: string): World {
   /** Pick a station orbit radius around a parent that stays clear of its moons' orbits. */
   const clearOrbit = (parent: Body, wanted: number): number => {
     const moons = w.bodies.filter(b => b.kind === 'moon' && b.orbit && b.orbit.parent === parent);
-    const minR = parent.maxRadius + 70;
+    // never closer to the surface than ~1.3 radii: launches must not drop straight into the well
+    const minR = Math.max(parent.maxRadius + 140, parent.radius * 2.3);
     let r = Math.max(wanted, minR);
     for (let i = 0; i < 6; i++) {
       let moved = false;
@@ -178,7 +179,7 @@ export function generateSystem(seed: number, seedName: string): World {
     }
     return r;
   };
-  const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: clearOrbit(home.body, home.body.radius * 2.4), period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
+  const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: clearOrbit(home.body, home.body.radius * 2.9), period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
   harbour.upgrades = ['retro', 'strafe', 'struts', 'tank', 'armour', 'scatter', 'mass', 'seeker', 'sensors', 'cargo'];
   const refineryHost = gas.moons.length ? gas.body : mid.body;
   const refinery = createStation(w, { name: names.station('refinery', refineryHost.name), kind: 'refinery', parent: refineryHost, orbitRadius: clearOrbit(refineryHost, refineryHost.radius * (refineryHost.kind === 'gas' ? 2.4 : 3.2)), period: 1000 + rng.int(300), phase: rng.next() * TAU, radius: 12, spin: 0.27 });
@@ -212,7 +213,7 @@ export function generateSystem(seed: number, seedName: string): World {
     const b = home.body;
     let outer = harbour.orbit!.radius;
     for (const m of home.moons) outer = Math.max(outer, m.orbit!.radius + m.maxRadius);
-    const cr = outer + 170;
+    const cr = outer + 320;
     for (let i = 0; i < 34; i++) {
       const a = rng.next() * TAU;
       const r = cr + (rng.next() - 0.5) * 90;

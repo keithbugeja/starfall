@@ -168,6 +168,7 @@ const scenarios = {
   },
   async fly({ page }) {
     await api.manual(page, true);
+    await api.launch(page);
     const s0 = await api.state(page);
     console.log('start', s0.player);
     await api.run(page, { thrust: 1 }, 2);
@@ -299,6 +300,116 @@ async function autoFight(page, seconds) {
 }
 
 const moreScenarios = {
+  async keys({ page }) {
+    // the real input path: keyboard and mouse events through the browser
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(400);
+    let st = await api.state(page);
+    console.log('after Enter:', st.mode);
+    await page.keyboard.press('KeyL');
+    await page.waitForTimeout(400);
+    st = await api.state(page);
+    console.log('after L:', st.mode, 'speed', st.player.speed.toFixed(1));
+    const s0 = st.player.speed;
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(1500);
+    await page.keyboard.up('KeyW');
+    st = await api.state(page);
+    console.log('after W 1.5s: speed', st.player.speed.toFixed(1), '(was', s0.toFixed(1) + ')', 'fuel', st.player.fuel.toFixed(1));
+    await page.keyboard.down('KeyA');
+    await page.waitForTimeout(500);
+    await page.keyboard.up('KeyA');
+    const a1 = (await api.state(page)).player.angle;
+    console.log('after A 0.5s: angle changed', Math.abs(a1 - st.player.angle).toFixed(2));
+    await page.mouse.move(900, 200);
+    await page.mouse.down();
+    await page.waitForTimeout(400);
+    await page.mouse.up();
+    st = await api.state(page);
+    console.log('after mouse click: projectiles', st.projectiles, 'heat', st.player.heat.toFixed(2));
+    await page.keyboard.press('KeyM');
+    await page.waitForTimeout(200);
+    console.log('after M:', (await api.state(page)).mode);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    console.log('after Esc:', (await api.state(page)).mode);
+    await page.keyboard.press('KeyH');
+    await page.waitForTimeout(200);
+    console.log('after H:', (await api.state(page)).mode);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    console.log('after Esc (pause):', (await api.state(page)).mode);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    console.log('after Esc (resume):', (await api.state(page)).mode);
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(200);
+    console.log('after Tab: nav', (await api.state(page)).nav);
+    await api.shot(page, 'keys_flight', 5);
+  },
+  async launches({ page }) {
+    await api.manual(page, true);
+    let deaths = 0, n = 0;
+    for (let i = 0; i < 20; i++) {
+      await api.newGame(page, 1000 + i * 37);
+      await api.launch(page);
+      await api.run(page, {}, 10);
+      const st = await api.state(page);
+      n++;
+      if (!st.player.alive || st.player.hull < 100) { deaths++; console.log('seed', 1000 + i * 37, 'hull', st.player.hull.toFixed(0), st.player.lastDamageSource); }
+    }
+    console.log('LAUNCH HARM', deaths, '/', n);
+  },
+  async assault({ page }) {
+    await api.manual(page, true);
+    for (const fit of ['stock', 'armoured']) {
+      await api.newGame(page, 4321);
+      await api.launch(page);
+      if (fit === 'armoured') { await page.evaluate(() => window.__sf.buyAll()); await page.evaluate(() => window.__sf.weapon('mass')); }
+      const st = await api.state(page);
+      const base = st.pads.find(p => p.kind === 'enemybase');
+      const b = st.bodies.find(x => x.name === base.body);
+      await page.evaluate(([x, y, a]) => window.__sf.teleport(x, y, 0, 0, a + Math.PI), [b.x + Math.cos(base.angle) * (base.height + 55), b.y + Math.sin(base.angle) * (base.height + 55), base.angle]);
+      const res = await page.evaluate(([ticks]) => {
+        const sf = window.__sf, w = sf.game.world, p = w.player;
+        const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+        const pad = w.pads.find(q => q.kind === 'enemybase');
+        const b = pad.body;
+        const hp0 = pad.enemyHealth;
+        for (let t = 0; t < ticks; t++) {
+          if (!p.alive || !pad.alive) break;
+          // hover at altitude ~40 over the base, nose toward it, and shoot at sentinels or the pad
+          const rx = p.pos.x - b.pos.x, ry = p.pos.y - b.pos.y, r = Math.hypot(rx, ry);
+          const ux = rx / r, uy = ry / r;
+          let gx = 0, gy = 0;
+          for (const bb of w.bodies) { const ex = bb.pos.x - p.pos.x, ey = bb.pos.y - p.pos.y; const dd = Math.hypot(ex, ey); if (dd >= bb.soi) continue; let a = bb.mass / Math.max(dd, bb.radius * 0.6) ** 2; const f = Math.max(0, Math.min(1, (bb.soi - dd) / (bb.soi * 0.25))); a *= f * f * (3 - 2 * f); gx += ex / dd * a; gy += ey / dd * a; }
+          const wantAlt = pad.height + 40;
+          const wantVr = (wantAlt - r) * 0.3;
+          const vr = (p.vel.x - b.vel.x) * ux + (p.vel.y - b.vel.y) * uy;
+          const ax = (ux * (wantVr - vr)) * 1.5 - gx, ay = (uy * (wantVr - vr)) * 1.5 - gy;
+          const am = Math.hypot(ax, ay);
+          // target: nearest live sentinel, else the pad centre
+          let tx = b.pos.x + Math.cos(pad.angle) * pad.height, ty = b.pos.y + Math.sin(pad.angle) * pad.height;
+          const sent = w.ships.filter(s => s.alive && s.kind === 'sentinel');
+          if (sent.length) { tx = sent[0].pos.x; ty = sent[0].pos.y; }
+          const aim = Math.atan2(ty - p.pos.y, tx - p.pos.x);
+          // thrust briefly when we need to hold altitude, otherwise aim and fire
+          const needThrust = am > 4;
+          const heading = needThrust ? Math.atan2(ay, ax) : aim;
+          const err = wrap(heading - p.angle);
+          const c = { turn: Math.max(-1, Math.min(1, err * 4)), thrust: needThrust && Math.abs(err) < 0.4 ? Math.min(1, am / p.stats.thrust) : 0, retro: 0, strafe: 0, fire: !needThrust && Math.abs(err) < 0.15, boost: false };
+          sf.controls(c);
+          sf.step(1);
+        }
+        sf.controls(null);
+        return { alive: p.alive, hull: p.hull, baseAlive: pad.alive, baseHp: pad.enemyHealth, hp0, sentinels: w.ships.filter(s => s.alive && s.kind === 'sentinel').length, time: w.time };
+      }, [120 * 90]);
+      console.log(fit, '=>', res.alive ? 'ALIVE' : 'DEAD', 'hull', res.hull.toFixed(0), 'base', res.baseAlive ? 'STANDS ' + res.baseHp.toFixed(0) + '/' + res.hp0 : 'DESTROYED', 'sentinels left', res.sentinels, 'time', res.time.toFixed(0));
+      await api.shot(page, 'assault_' + fit, 20);
+    }
+  },
   async endings({ page }) {
     await api.manual(page, true);
     await api.newGame(page, 8);

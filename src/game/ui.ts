@@ -34,6 +34,7 @@ const TIPS: string[] = [
   'A REAVER CARRYING A POD DROPS IT WHEN KILLED. CATCH THE POD SLOWLY, OR LET IT FALL HOME.',
   'A GAS GIANT SKIM REFUELS YOU. GO DEEP AND IT CRUSHES YOU.',
   'YOU CANNOT SAVE EVERYONE. CHOOSE.',
+  'THE STARFALL CORE SITS ON THE ENEMY WORLD (RED ON THE MAP) UNDER SENTINEL GUNS. KILL IT TO SECURE THE SYSTEM.',
 ];
 
 export function drawTitle(g: Game): void {
@@ -63,14 +64,14 @@ export function drawTitle(g: Game): void {
   drawText(H, rows[1], W / 2, Hh - 46 * s, 10 * s, C.amber[0], C.amber[1], C.amber[2], 0.6, 'center');
   drawText(H, 'AN ARCADE MACHINE FROM A 1982 THAT NEVER HAPPENED', W / 2, Hh - 24 * s, 8 * s, C.dim[0], C.dim[1], C.dim[2], 0.6, 'center');
 
-  // input
+  // input: hotkeys first, then seed entry (H is reserved for the manual)
   const inp = g.input;
+  if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { g.helpReturn = 'title'; g.mode = 'help'; return; }
+  if (inp.wasPressed('Enter') || inp.wasPressed('NumpadEnter') || inp.wasPressed('GP9') || inp.wasPressed('GP0')) { g.beginPatrol(); return; }
   for (const ch of inp.typed) {
-    if (/^[a-zA-Z0-9 \-]$/.test(ch) && g.seedText.length < 16) { g.seedText += ch.toUpperCase(); g.seedDirty = true; }
+    if (/^[a-gi-zA-GI-Z0-9 \-]$/.test(ch) && g.seedText.length < 16) { g.seedText += ch.toUpperCase(); g.seedDirty = true; }
   }
   if (inp.wasPressed('Backspace')) { g.seedText = g.seedText.slice(0, -1); g.seedDirty = true; }
-  if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { g.helpReturn = 'title'; g.mode = 'help'; }
-  if (inp.wasPressed('Enter') || inp.wasPressed('NumpadEnter') || inp.wasPressed('GP9') || inp.wasPressed('GP0')) g.beginPatrol();
 }
 
 export function drawHelp(g: Game): void {
@@ -200,7 +201,7 @@ export function drawDocked(g: Game): void {
   let ey = top + (serviceCount + 3) * rowH;
   if (active.length) { drawText(H, 'SITUATIONS OUTSIDE', leftX, ey, 10 * s, C.red[0], C.red[1], C.red[2], 0.8); ey += 16 * s; }
   for (const e of active.slice(0, 5)) { const col = eventColor(e.kind); drawText(H, `${e.label}  ${Math.max(0, Math.ceil(e.timer))}S`, leftX, ey, 9 * s, col[0], col[1], col[2], 0.85); ey += 14 * s; }
-  drawText(H, 'UP/DOWN SELECT  ·  ENTER BUY  ·  L LAUNCH  ·  M MAP', W / 2, Hh - 30 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.8, 'center');
+  drawText(H, 'UP/DOWN SELECT  ·  ENTER BUY  ·  L LAUNCH  ·  M MAP  ·  H MANUAL', W / 2, Hh - 30 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.8, 'center');
   // activation
   const clicked = (inp.mousePressed & 1) !== 0 && hovered >= 0;
   if (clicked) g.menuIndex = hovered;
@@ -208,9 +209,9 @@ export function drawDocked(g: Game): void {
     const r = rows[g.menuIndex];
     if (r.action && r.enabled) r.action(); else sfx(w, 'deny');
   }
-  if (inp.wasPressed('KeyL') || inp.wasPressed('Escape') || inp.wasPressed('GP1')) g.launch();
-  if (inp.wasPressed('KeyM') || inp.wasPressed('GP8')) { g.mapReturn = 'docked'; g.mode = 'map'; }
-  if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { g.helpReturn = 'docked'; g.mode = 'help'; }
+  if (inp.wasPressed('KeyL') || inp.wasPressed('GP1')) g.launch();
+  if (inp.wasPressed('KeyM') || inp.wasPressed('GP8')) { g.mapReturn = 'docked'; g.mode = 'map'; inp.consume('KeyM'); inp.consume('GP8'); }
+  if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { g.helpReturn = 'docked'; g.mode = 'help'; inp.consume('KeyH'); inp.consume('F1'); }
   void UPGRADES; void textWidth;
 }
 
@@ -417,8 +418,8 @@ export function drawPause(g: Game): void {
   drawText(H, 'ESC: RESUME   ·   H: MANUAL   ·   M: MAP   ·   T: ABANDON PATROL', W / 2, Hh * 0.42 + 40 * s, 11 * s, C.white[0], C.white[1], C.white[2], 0.8, 'center');
   const inp = g.input;
   if (inp.wasPressed('Escape') || inp.wasPressed('KeyP') || inp.wasPressed('GP9')) g.mode = 'flight';
-  if (inp.wasPressed('KeyH')) { g.helpReturn = 'pause'; g.mode = 'help'; }
-  if (inp.wasPressed('KeyM')) { g.mapReturn = 'pause'; g.mode = 'map'; }
+  if (inp.wasPressed('KeyH')) { g.helpReturn = 'pause'; g.mode = 'help'; inp.consume('KeyH'); }
+  if (inp.wasPressed('KeyM')) { g.mapReturn = 'pause'; g.mode = 'map'; inp.consume('KeyM'); }
   if (inp.wasPressed('KeyT')) { g.world.gameOver = true; g.mode = 'gameover'; }
 }
 

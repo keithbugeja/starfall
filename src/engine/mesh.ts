@@ -118,6 +118,7 @@ export class GpuMesh {
   instCapacity: number;
   vertexCount: number;
   radius: number;
+  private buffers: WebGLBuffer[] = [];
   constructor(private gl: WebGL2RenderingContext, data: MeshData, initialCapacity = 4) {
     this.vertexCount = data.vertexCount;
     this.radius = data.radius;
@@ -129,6 +130,7 @@ export class GpuMesh {
     gl.bindVertexArray(vao);
     const mk = (loc: number, arr: Float32Array) => {
       const b = gl.createBuffer();
+      if (b) this.buffers.push(b);
       gl.bindBuffer(gl.ARRAY_BUFFER, b);
       gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW);
       gl.enableVertexAttribArray(loc);
@@ -148,6 +150,12 @@ export class GpuMesh {
       gl.vertexAttribDivisor(3 + i, 1);
     }
     gl.bindVertexArray(null);
+  }
+  destroy(): void {
+    const gl = this.gl;
+    gl.deleteVertexArray(this.vao);
+    for (const b of this.buffers) gl.deleteBuffer(b);
+    gl.deleteBuffer(this.instBuf);
   }
   /** Queue an instance: model matrix (16 floats) and tint rgb + emissive. */
   add(m: Float32Array, r: number, g: number, b: number, emissive: number): void {
@@ -191,6 +199,9 @@ export class MeshRenderer {
     const m = new GpuMesh(this.gl, data, capacity);
     this.meshes.add(m);
     return m;
+  }
+  remove(m: GpuMesh): void {
+    if (this.meshes.delete(m)) m.destroy();
   }
   /** Draw all queued instances of all meshes. */
   flush(viewProj: Float32Array, lightPos: [number, number, number], camPos: [number, number, number], ambient: number): void {

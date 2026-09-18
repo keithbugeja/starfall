@@ -89,6 +89,8 @@ export class Input {
   }
 
   down(code: string): boolean { return this.keys.has(code); }
+  /** Consume a press so later handlers in the same frame do not react to it. */
+  consume(code: string): void { this.pressed.delete(code); this.overridePressed.delete(code); }
   /** Edge-triggered: true on the frame the key went down. Also accepts test-harness injections. */
   wasPressed(code: string): boolean { return this.pressed.has(code) || this.overridePressed.has(code); }
   gpButton(i: number): number { return this.gpButtons[i] ?? 0; }

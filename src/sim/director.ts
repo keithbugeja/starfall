@@ -63,7 +63,7 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
       spawnSentinel(w, b);
       if (b.kind === 'core') { spawnSentinel(w, b).ai!.strafeDir = -1; }
     }
-    comm(w, 'CONTROL', `PATROL KESTREL, YOU ARE CLEARED TO LAUNCH. THE ${w.enemyCore ? w.enemyCore.body.name : 'OUTER'} SITE IS ACTIVE AGAIN.`, [0.6, 0.9, 1], 1);
+    comm(w, 'CONTROL', `PATROL KESTREL, CLEARED TO LAUNCH. THE STARFALL ON ${w.enemyCore ? w.enemyCore.body.name : 'THE OUTER WORLD'} IS ACTIVE AGAIN. KEEP THE COLONIES ALIVE. KILL THE CORE WHEN YOU CAN.`, [0.6, 0.9, 1], 1);
   }
   if (w.gameOver) return;
   // threat grows with time and with the number of enemy bases; falls when bases die

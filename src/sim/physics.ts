@@ -99,13 +99,18 @@ export function stepShip(w: World, s: Ship, c: Controls, dt: number): void {
 
   s.vel.x += ax * dt; s.vel.y += ay * dt;
 
-  // soft speed cap
+  // soft speed cap: only while under power. Coasting is Newtonian, so burn-and-coast and
+  // slingshot gains are kept. A faint drag far above any cap stops runaway numbers.
   const cap = boosting ? st.boostMax : st.maxSpeed;
   const sp = Math.hypot(s.vel.x, s.vel.y);
-  if (sp > cap) {
+  const powered = thrust > 0 || retro > 0 || strafe !== 0;
+  if (powered && sp > cap) {
     const excess = sp - cap;
     const decel = excess * 0.7 + 2;
     const k = Math.max(0, 1 - (decel / sp) * dt);
+    s.vel.x *= k; s.vel.y *= k;
+  } else if (sp > 220) {
+    const k = Math.max(0, 1 - ((sp - 220) * 0.5 / sp) * dt);
     s.vel.x *= k; s.vel.y *= k;
   }
 
@@ -675,10 +680,9 @@ export function collide(w: World, dt: number): void {
         collectPickup(w, pl, p);
       } else if (reach > 0 && d < reach && p.kind !== 'wreck') {
         // tractor beam: pull gently toward the player
-        const k = 18 * dt;
-        p.vel.x = damp(p.vel.x, pl.vel.x - dx / d * 10, 4, dt);
-        p.vel.y = damp(p.vel.y, pl.vel.y - dy / d * 10, 4, dt);
-        void k;
+        const pull = p.kind === 'pod' ? 4.5 : 9;
+        p.vel.x = damp(p.vel.x, pl.vel.x - dx / d * pull, 4, dt);
+        p.vel.y = damp(p.vel.y, pl.vel.y - dy / d * pull, 4, dt);
       }
     }
   }

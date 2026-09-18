@@ -1,76 +1,118 @@
 # STARFALL — internal design document
 
-Authoritative brief: `starfall.md` (read-only). This file records the decisions made to build it.
+Authoritative brief: `starfall.md` (read-only). This file records the decisions made to build it,
+updated to reflect the game as shipped.
 
 ## One-line pitch
-You are the last patrol pilot of a dense, dying star system. Fly a small inertial craft through
-real gravity wells, answer distress calls you cannot all answer, land on faceted worlds, dock with
-spinning stations, and push back a machine tide spreading from a fallen star fragment.
+You are the last patrol pilot of a dense star system. Fly a small inertial craft through real
+gravity wells, answer distress calls you cannot all answer, land on faceted worlds, dock with
+spinning stations, and put out the machine tide spreading from a fallen star.
 
 ## Core (smallest strong loop)
 Rotate + thrust flight with inertia, in a planar world rendered in 3D, inside gravity wells,
-with a visible predicted trajectory. Everything else hangs off that: landing is "arrive with
-the right velocity and orientation", combat is "shots inherit your motion and bend in gravity",
-navigation is "ride or fight the wells".
+with a visible predicted trajectory. Everything hangs off that: landing is "arrive with the
+right velocity and orientation", combat is "shots inherit your motion and bend in gravity",
+navigation is "ride or fight the wells". The run ends when the three hulls are gone or the
+enemy core is dark; both endings show a debrief, and a win lets you keep flying.
 
 ## Space
-- Sim is 2D (x, y on the ecliptic). Render maps sim (x, y) -> world (x, 0, -y). Camera is near
-  top-down, world-fixed orientation (north up), perspective, zooms out with speed and in near
-  surfaces. No roll. A gravity-aligned camera is an experiment for later, not a default.
-- Planets/moons are oblate faceted spheroids. Their equatorial height profile h(theta) IS the
-  collision surface, and the mesh's equator ring matches it exactly, so what you see is what you hit.
-- Compressed scale: ship ~1 unit. Planet radius 40–140. Star radius ~220. System radius ~4500.
+- Sim is 2D (x, y on the ecliptic) at a fixed 120 Hz. Render maps sim (x, y) -> world (x, 0, -y).
+  Near top-down perspective camera, world-fixed orientation (north up). It leads the ship by
+  velocity, zooms out with speed, and near a surface it frames ship and ground together and
+  flattens its tilt so the planet rim cannot hide the ship. No roll.
+- Planets and moons are oblate faceted spheroids (y scale 0.32). The equatorial terrain profile
+  is the collision polygon and the mesh's equator ring matches it exactly: what you see is what
+  you hit. Gas giants have no surface, a crushing atmosphere, a fuel-scoop layer, and a flat ring.
+- Scale: ship ~1 unit, planets 55–190, star 200–250, outer orbit ~4000.
 
 ## Gravity
-- Per body: a = GM / r^2 clamped, faded to zero at the body's sphere of influence. Star has a
-  broad gentle well; planets have strong local wells; moons small ones.
-- Projectiles obey gravity. Pods and salvage obey gravity. AI obeys gravity.
-- HUD shows the net gravity vector and a predicted trajectory (integrated ahead, stops at impact).
-  This is what makes gravity exploitable rather than annoying.
+- Per body: a = GM / r^2 clamped near the centre, faded to zero across the outer quarter of the
+  sphere of influence (planets 7 radii, moons 4.5, star 22). The star is a gentle pull everywhere
+  (about 0.5 at the home world) and a killer inside two radii.
+- Projectiles, pods, salvage, asteroids and AI all obey it. Belts orbit the star; clusters orbit
+  planets. "The Fault" is a tiny body with a brutal well guarding rich ore and a unique module.
+- HUD shows the net gravity arrow and a 9-second predicted trajectory that stops at impact and
+  marks it with an X (green if survivable, red if not). This is what makes gravity readable.
+- Coasting is Newtonian: the soft speed cap (60, 135 boosting) only applies while under power, so
+  burn-and-coast and slingshot gains survive. Fuel is spent on manoeuvring and landing, not transit.
 
-## Ship
-- Controls: turn, main thrust, weak retro (upgrade), boost (cruise mode: high thrust, no fire,
-  fuel burn), fire, map, dock/land assist readouts. Keyboard + mouse steer; gamepad.
-- Resources: hull, fuel, cargo. Fuel burns on thrust; running dry means gravity wins.
+## Ship (Kestrel)
+- Controls: rotate, main thrust, boost (hold Shift: big thrust, fuel burn, no weapons), retro and
+  lateral jets as upgrades, fire, seeker (upgrade), map, cycle course, manual, pause. Mouse steers
+  toward the cursor; left button fires, right boosts. Gamepad mapped.
+- Resources: hull 100, fuel 100, cargo 8, weapon heat. Three hulls per run; a spare every score
+  milestone (8000, 20000, then doubling). Death returns you to the last station with cargo lost.
 
 ## Landing / docking
-- Land on pads: normal speed < ~4, tangential < ~2.5, upright within ~25 deg. Terrain contact
-  outside tolerance damages by impact energy. Flat terrain landing allowed at tighter tolerance.
-- Stations rotate; the docking slot is a bay you must enter along its axis, slowly, while it
-  comes around. HUD gives corridor guidance.
+- Land on any pad or flat-enough terrain: descent < 4.5, drift < 2.6, heading within 27° of the
+  surface normal (struts widen all three by 40%). Harder impacts damage by energy; wrong-side
+  touchdowns hurt. Colonies refuel and repair for free and take rescued pods; mines refuel and load
+  ore; derelicts yield one unique module after a salvage crew works for seven seconds.
+- Stations rotate (0.2–0.27 rad/s) with a 60° gap in the ring; enter through the gap and touch the
+  hub under 7 relative. Bouncing off the ring or hub costs hull. Stations orbit their world at
+  least 1.3 radii above the surface and clear of moons; the harbour sits at ~2.9 radii. Leaving
+  through a gap that faces the world gets a slow, sideways exit and a warning.
 
 ## Combat
-- Pulse cannon shots inherit ship velocity. Enemies: Wasp (fast strafer, swarms), Lancer
-  (pursuer that matches velocity and fires bursts), Reaver (abducts colony pods, Defender lander
-  analog: kill it and catch the falling pod), Bastion turrets at enemy bases, Dreadnought
-  (slow heavy shells bent by gravity, escorted).
-- Environment: asteroids split and drift; gravity bends every shot; terrain blocks fire.
+- Player weapons: pulse (default), scatter, rail (ignores gravity), mass driver (falls hard, recoil),
+  seekers (secondary, homing, limited). All inherit velocity; heat limits sustained fire.
+- Enemies behave differently: Wasp (fast strafing runs, breaks off and returns), Lancer (matches
+  velocity, holds range, fires bursts, retreats to repair below a quarter hull), Reaver (comes in
+  high over a colony, descends, hovers four seconds, lifts a pod and runs for the core; killing it
+  drops the pod, which falls home or can be caught slowly), Sentinel (base turret with a horizon
+  check), Dreadnought (besieges stations with gravity-bent shells and turrets, escorted).
+- Stations shoot back a little (range 100). Terrain blocks every shot. A lead pip shows where a
+  pulse round would meet the nearest enemy.
 
 ## World
-- One generated system per seed: star, 4–6 planets (rock/ice/volcanic/desert/gas giant), moons,
-  1–2 belts, 2–3 stations, colonies + mines on surfaces, derelicts, one anomaly, an enemy
-  foothold on the far side that expands over time.
-- Civilian traffic (freighters between colonies and stations) exists whether or not you look.
+- One generated system per seed: star, 5–6 worlds with roles (inner volcanic/desert, home rock,
+  mid desert/crystal, gas giant with rings and moons, optional outer ice, enemy world with the
+  Starfall core and two bases), moons, a main belt, a home cluster, the Fault's debris ring,
+  three stations (harbour, refinery, research array) with different shops and prices, colonies,
+  mines and derelicts. Named by a curated generator. Generation invariants are unit-tested over
+  120 seeds; the sim is soak-tested for minutes.
+- Civilian freighters and shuttles travel between pads and stations, queue for the gap and dock.
 
-## Events (director)
-Raids on colonies, convoys attacked, station sieges, stranded ships, base construction, rogue
-asteroid on a collision course, salvage discoveries, solar flares. Events are timed, expire, and
-have consequences. Comms tell you; the map shows you; you choose.
+## Director (events)
+- Scripted opening: a debris field beside the harbour at 16 s (teaches pickups and selling), a
+  one-reaver raid on the nearest colony at ~66 s (teaches combat and pods). Then a weighted random
+  schedule every 30–100 s: raids (prefer colonies far from you), convoys under attack, sieges
+  (threat > 4), stranded shuttles falling into wells (refuel by gentle contact), enemy base
+  construction (a new pad is carved and the planet mesh rebuilt), rogue asteroids on 60–90 s
+  collision courses with their predicted path drawn, debris fields, solar flares (28 s warning,
+  22 s of radiation unless in shadow, landed or docked), hunter packs.
+- Events expire and have consequences: pods taken into the core, colonies going silent when their
+  integrity fails, stations destroyed. Rewards only for outcomes the player caused.
+- Threat rises with time and living bases; bases launch waves; far, idle enemies go home. Killing
+  bases thins raids; killing the core secures the system.
 
 ## Progression
-Credits from bounties, salvage, rescues, trade. Upgrades change capability with trade-offs
-(retro thrusters, lateral thrusters, heavy hull, grav dampers, fuel tank, weapons, sensors,
-tractor, heat shield). Lives: 3 hulls; extra at score milestones. Run ends when hulls are gone or
-the enemy core is destroyed.
+Credits from bounties, event rewards, ore and salvage sales. Upgrades change capability with a
+stated trade-off (mass, burn, heat) and are spread across the three stations so shopping is a
+navigation decision. Five unique modules only come from derelicts and the Fault.
 
 ## Rendering
-WebGL2, no textures, no external art. Instanced flat-shaded meshes with 4-band quantised lighting
-from the star. Lines are screen-space expanded quads (HUD, trajectory, text, weapons, map).
-Stroke font for all text. Particles as points. Post: bloom + phosphor persistence on the vector
-layer, vignette. Framebuffer render targets are used for post-processing; that is not texture
-mapping of artwork and is within the brief's intent.
+WebGL2, no textures, no external art. Instanced flat-shaded meshes with four-band quantised
+lighting from the star plus a faint camera fill. Lines are screen-space expanded quads with a
+bright core (HUD, stroke-font text, trajectories, weapons, map). Particles as points. Post: a
+separate vector layer with phosphor persistence and two-scale bloom, world-only fade under
+overlays, vignette, faint scan modulation, 3% flicker. Framebuffer render targets are used for
+post-processing; that is not texture mapping of artwork and is within the brief's intent.
+
+## Audio
+Everything synthesised with WebAudio after the first gesture: thrust noise, weapon tones, filtered
+noise explosions, alarms, docking and success chimes, comm blips, a restrained drone, and a
+gravity hum whose pitch and level follow the local field. No music.
 
 ## Testing
-Fixed 120 Hz sim, seeded RNG everywhere in sim/gen. `window.__sf` harness: seed, step N ticks,
-inject controls, dump state. Playwright scripts under `playtest/` run scenarios and screenshots.
-Vitest for gen invariants and physics.
+`window.__sf` harness: seed, step N ticks, inject controls or key presses, teleport, force
+events, spawn enemies, dump state. Playwright scenarios under `playtest/` drive autopilots for
+landing, docking, dogfights, raids, base assaults, real keyboard/mouse input, launch safety
+surveys, and screenshot galleries. Vitest covers generation and stability.
+
+## Deviations from first plan
+- Coasting speed cap removed (kept only under power) after measuring that boost-and-coast died.
+- Harbour moved from 3.4 to ~2.9 radii and clear of moons after launch surveys showed drifts into
+  moons and the asteroid cluster.
+- Sentinels cut from 13 to ~4 damage per second after a scripted assault died in seven seconds.
+- Gravity-aligned camera roll never built; the fixed-north camera with ground framing was enough.

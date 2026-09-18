@@ -392,7 +392,7 @@ export function shipBase(kind: ShipKind): { name: string; radius: number; hull: 
     case 'freighter': return { name: 'FREIGHTER', radius: 2.2, hull: 120, fuel: 1e9, stats: createStats({ thrust: 6, turnRate: 1.2, maxSpeed: 30, retro: 3, strafe: 2 }), weapon: 'pulse', bounty: 0 };
     case 'dreadnought': return { name: 'DREADNOUGHT', radius: 4.5, hull: 900, fuel: 1e9, stats: createStats({ thrust: 4, turnRate: 0.5, maxSpeed: 20, retro: 2, strafe: 2 }), weapon: 'mass', bounty: 3000 };
     case 'shuttle': return { name: 'SHUTTLE', radius: 0.9, hull: 30, fuel: 1e9, stats: createStats({ thrust: 10, turnRate: 2.5, maxSpeed: 40, retro: 4, strafe: 3 }), weapon: 'pulse', bounty: 0 };
-    case 'sentinel': return { name: 'SENTINEL', radius: 1.6, hull: 140, fuel: 1e9, stats: createStats({ thrust: 0, turnRate: 1.6, maxSpeed: 0 }), weapon: 'lance', bounty: 250 };
+    case 'sentinel': return { name: 'SENTINEL', radius: 1.6, hull: 70, fuel: 1e9, stats: createStats({ thrust: 0, turnRate: 1.6, maxSpeed: 0 }), weapon: 'lance', bounty: 250 };
   }
 }
 

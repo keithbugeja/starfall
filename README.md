@@ -31,7 +31,7 @@ Open the URL Vite prints (usually http://localhost:5173), press ENTER.
 | Tab | cycle course between situations and stations |
 | H | flight manual |
 | 0 | mute |
-| Esc | pause |
+| Esc | pause (in the dock: nothing; L launches) |
 
 Gamepad: left stick turns, right trigger thrusts, A fires, B boosts, bumpers strafe, Start pauses,
 Back opens the map.
@@ -47,11 +47,14 @@ Back opens the map.
 - Docking: enter the rotating ring through the gap, touch the hub under 7.
 - The system lives whether or not you look: raids, convoys, sieges, stranded ships, rogue
   asteroids, solar flares, enemy construction. You cannot save everyone.
+- The run ends when your three hulls are gone, or when you destroy the Starfall core on the
+  enemy world (red on the map). Spare hulls come with score. After a win you can keep flying.
 
 ## Development
 
 - `npm test` runs generation and stability invariants (Vitest).
 - `npm run playtest -- <scenario>` drives the built game in headless Chromium (needs
   `npx playwright install chromium` and a running `npm run preview`). Scenarios: idle, fly, fall,
-  land, smoke, dock, combat, raid, approach. Screenshots land in `playtest/out/`.
+  land, smoke, dock, combat, raid, approach, tour, keys, launches, assault, gallery, endings,
+  upgrades, audio, perf. Screenshots land in `playtest/out/`.
 - `DESIGN.md` records the design decisions; `starfall.md` is the original brief.

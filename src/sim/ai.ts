@@ -21,7 +21,7 @@ export function spawnAiShip(w: World, kind: ShipKind, faction: Faction, x: numbe
     case 'lancer': s.weapon = { ...makeWeapon('lance'), cooldown: 0.16, damage: 12, speed: 90, life: 1.6 }; break;
     case 'reaver': s.weapon = { ...makeWeapon('lance'), cooldown: 1.0, damage: 16, speed: 70, life: 1.4 }; break;
     case 'dreadnought': s.weapon = { ...makeWeapon('mass'), cooldown: 1.8, damage: 48, speed: 42, life: 6 }; s.secondary = { ...makeWeapon('lance'), cooldown: 1.1, damage: 14, speed: 80, life: 1.6 }; break;
-    case 'sentinel': s.weapon = { ...makeWeapon('lance'), cooldown: 1.15, damage: 15, speed: 88, life: 1.8 }; break;
+    case 'sentinel': s.weapon = { ...makeWeapon('lance'), cooldown: 1.4, damage: 6, speed: 68, life: 2.0, spread: 0.08 }; break;
     case 'freighter': s.weapon = { ...makeWeapon('pulse'), cooldown: 0.5, damage: 5 }; break;
     default: break;
   }

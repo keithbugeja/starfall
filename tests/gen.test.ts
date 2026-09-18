@@ -43,12 +43,14 @@ describe('system generation', () => {
           expect(Math.abs(o.orbit!.radius - b.orbit!.radius)).toBeGreaterThan(maxTerrainRadius(o) + maxTerrainRadius(b) + 10);
         }
       }
-      // stations clear their parent body and every other body
+      // stations clear their parent body and every other body, and sit well above their parent's surface
       for (const st of w.stations) {
         for (const b of w.bodies) {
           const d = Math.hypot(st.pos.x - b.pos.x, st.pos.y - b.pos.y);
           expect(d).toBeGreaterThan(maxTerrainRadius(b) + st.radius + 5);
         }
+        const parent = st.orbit!.parent;
+        expect(st.orbit!.radius).toBeGreaterThan(maxTerrainRadius(parent) + 130);
       }
       // pads: flat chord, not overlapping another pad on the same body
       for (const b of w.bodies) {

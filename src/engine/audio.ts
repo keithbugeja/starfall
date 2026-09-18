@@ -80,7 +80,7 @@ export class AudioSystem {
     const t = ctx.currentTime + when;
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuf;
-    src.loopStart = Math.random();
+    src.loop = true;
     const flt = ctx.createBiquadFilter();
     flt.type = filterType; flt.Q.value = q;
     flt.frequency.setValueAtTime(f0, t);
@@ -90,7 +90,8 @@ export class AudioSystem {
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     const p = ctx.createStereoPanner(); p.pan.value = pan;
     src.connect(flt); flt.connect(g); g.connect(p); p.connect(this.master);
-    src.start(t, Math.random() * 1.5, dur + 0.05);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + dur + 0.05);
   }
 
   private tone(type: OscillatorType, f0: number, f1: number, dur: number, gain: number, pan = 0, when = 0, attack = 0.005): void {

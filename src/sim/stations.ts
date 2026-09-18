@@ -216,6 +216,20 @@ export function undock(w: World, s: Ship): void {
   const tang = st.spin * (hub + 2);
   s.vel.x = st.vel.x + cx * 12 - cy * tang;
   s.vel.y = st.vel.y + cy * 12 + cx * tang;
+  // if the gap faces the parent world, curve the exit away from it and say so
+  const parent = st.orbit ? st.orbit.parent : null;
+  if (parent) {
+    const px = parent.pos.x - st.pos.x, py = parent.pos.y - st.pos.y;
+    const pl = Math.hypot(px, py) || 1;
+    const facing = (cx * px + cy * py) / pl;
+    if (facing > 0.2) {
+      // leave slowly with a sideways drift so there is time to turn before the well takes hold
+      const side = (cx * py - cy * px) > 0 ? -1 : 1;
+      s.vel.x = st.vel.x + cx * 6 - cy * tang - cy * side * 3.5;
+      s.vel.y = st.vel.y + cy * 6 + cx * tang + cx * side * 3.5;
+      if (s === w.player) comm(w, st.name, `EXIT FACES ${parent.name}. TURN AND CLIMB BEFORE YOU CRUISE.`, [1, 0.8, 0.4], 2);
+    }
+  }
   s.invuln = 1.5;
   if (s === w.player) { w.stats.launches++; sfx(w, 'launch', s.pos, 0.8); }
 }
