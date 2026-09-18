@@ -1,6 +1,9 @@
 // World state: everything the simulation owns. Rendering reads it; it never writes it.
 import { Rng, type V2 } from '../engine/math';
 import type { Body, Pad } from './bodies';
+import type { Fissure } from './walls';
+import type { Tether } from './tether';
+import type { Ping } from './ping';
 
 export const SIM_DT = 1 / 120;
 
@@ -40,8 +43,9 @@ export interface Weapon {
 export interface LandedState {
   body: Body;
   pad: Pad | null;
-  offset: V2;   // position relative to body centre
-  angle: number;
+  offset: V2;   // position relative to body centre, in the body's local frame
+  angle: number; // heading in the body's local frame
+  normal: V2;   // surface normal in the body's local frame
 }
 
 export interface AiState {
@@ -116,6 +120,10 @@ export interface Ship {
   upgrades: string[];
   ownedWeapons: WeaponKind[];
   modules: string[];
+  tether: Tether | null;
+  stunned: number;
+  flashUntil: number;
+  transferHeld: boolean;
 }
 
 export interface Cargo {
@@ -158,9 +166,10 @@ export interface Asteroid {
   alive: boolean;
   rogue: boolean;    // event: on collision course
   killedBy: Faction;
+  flashUntil: number;
 }
 
-export type PickupKind = 'ore' | 'salvage' | 'pod' | 'fuel' | 'module' | 'wreck';
+export type PickupKind = 'ore' | 'salvage' | 'pod' | 'fuel' | 'module' | 'wreck' | 'prop' | 'log';
 
 export interface Pickup {
   id: number;
@@ -177,6 +186,15 @@ export interface Pickup {
   moduleId: string;   // unique module for 'module'
   name: string;
   spin: number;
+  mass: number;
+  tetherable: boolean;
+  tetheredBy: Ship | null;
+  flashUntil: number;
+  glow: number;              // 0 = none, else a pulsing glow (rhythm shared with the tide)
+  socketBody: Body | null;   // props: the body whose socket holds them
+  socketLocal: V2 | null;    // socket position in that body's local frame
+  beacon: boolean;           // emits an audible blip whose rate rises with proximity
+  indestructible: boolean;
 }
 
 export interface Station {
@@ -186,6 +204,7 @@ export interface Station {
   vel: V2;
   angle: number;        // rotation of the station
   spin: number;         // rad/s
+  spinNominal: number;  // the motors work back toward this
   radius: number;       // hull radius (collision)
   bayDepth: number;     // how far the bay goes in
   bayHalfWidth: number;
@@ -204,6 +223,7 @@ export interface Station {
   meshIndex: number;
   lastDockTime: number;
   stock: number;
+  flashUntil: number;
 }
 
 export interface CommMessage {
@@ -269,6 +289,55 @@ export interface World {
   screenShake: number;
   waveTimer: number;
   lastPlayerHit: number;
+  pings: Ping[];
+  pingEvents: { body: Body; time: number; x: number; y: number }[];
+  slices: SliceState;
+  hudFlicker: number;
+}
+
+/** State of the hand-authored experiences. Everything here persists whatever else happens. */
+export interface SliceState {
+  cutBody: Body | null;
+  cutFissure: Fissure | null;
+  regulator: Pickup | null;
+  cutPowered: boolean;
+  cutPowerLostAt: number;
+  cutEntered: boolean;
+  pilgrim: Body | null;
+  pilgrimSaved: boolean;
+  pilgrimLost: boolean;
+  pilgrimNextComm: number;
+  pilgrimCommIdx: number;
+  pilgrimAnnounced: boolean;
+  pilgrimSpawnAt: number;
+  pilgrimLastWarn: number;
+  rock: Body | null;
+  blackBox: Pickup | null;
+  wreck: Pickup | null;
+  logPlayed: boolean;
+  logLine: number;
+  logNext: number;
+  beaconNext: number;
+  fault: Body | null;
+  faultOnBeat: number;
+  faultOffBeat: number;
+  faultLastPing: number;
+  faultCooldownUntil: number;
+  faultFlash: number;
+  faultAnswerAt: number;
+  faultAnswerKind: string;
+  tideStillUntil: number;
+  tideCalledUntil: number;
+}
+
+export function emptySliceState(): SliceState {
+  return {
+    cutBody: null, cutFissure: null, regulator: null, cutPowered: true, cutPowerLostAt: -1e9, cutEntered: false,
+    pilgrim: null, pilgrimSaved: false, pilgrimLost: false, pilgrimNextComm: 0, pilgrimCommIdx: 0, pilgrimAnnounced: false, pilgrimSpawnAt: 120, pilgrimLastWarn: -1e9,
+    rock: null, blackBox: null, wreck: null, logPlayed: false, logLine: 0, logNext: 0, beaconNext: 0,
+    fault: null, faultOnBeat: 0, faultOffBeat: 0, faultLastPing: -1e9, faultCooldownUntil: -1e9, faultFlash: 0, faultAnswerAt: -1e9, faultAnswerKind: '',
+    tideStillUntil: -1e9, tideCalledUntil: -1e9,
+  };
 }
 
 export type EventKind = 'raid' | 'convoy' | 'siege' | 'stranded' | 'construction' | 'rogue' | 'salvage' | 'flare' | 'ambush' | 'hunt';
@@ -378,6 +447,10 @@ export function createShip(w: World, kind: ShipKind, faction: Faction, x: number
     upgrades: [],
     ownedWeapons: [base.weapon],
     modules: [],
+    tether: null,
+    stunned: 0,
+    flashUntil: -1e9,
+    transferHeld: false,
   };
   w.ships.push(ship);
   return ship;
@@ -417,6 +490,10 @@ export function createEmptyWorld(seed: number, seedName: string): World {
     screenShake: 0,
     waveTimer: 0,
     lastPlayerHit: -1e9,
+    pings: [],
+    pingEvents: [],
+    slices: emptySliceState(),
+    hudFlicker: 0,
   };
   return w;
 }

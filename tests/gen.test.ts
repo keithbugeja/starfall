@@ -2,12 +2,9 @@
 // stations sit clear of bodies, moons clear their parents, and the sim runs without NaNs.
 import { describe, expect, it } from 'vitest';
 import { generateSystem } from '../src/gen/system';
-import { maxTerrainRadius, terrainRadiusAt, updateOrbits } from '../src/sim/bodies';
-import { collide, stepAsteroids, stepPickups, stepProjectiles, stepShip } from '../src/sim/physics';
-import { updateStations } from '../src/sim/stations';
-import { updateDirector } from '../src/sim/director';
-import { updateAi, aiFire, pruneShips } from '../src/sim/ai';
+import { maxTerrainRadius, terrainRadiusAt } from '../src/sim/bodies';
 import { emptyControls } from '../src/engine/input';
+import { stepWorld } from '../src/sim/step';
 import { SIM_DT } from '../src/sim/world';
 import { hashString } from '../src/engine/math';
 
@@ -30,7 +27,7 @@ describe('system generation', () => {
       expect(w.pads.filter(p => p.kind === 'colony').length).toBeGreaterThanOrEqual(4);
       expect(w.enemyCore).not.toBeNull();
       // orbits are ordered: no two planets share an orbit band
-      const planets = w.bodies.filter(b => b.kind === 'planet' || b.kind === 'gas').filter(b => b.name !== 'THE FAULT');
+      const planets = w.bodies.filter(b => b.kind === 'planet' || b.kind === 'gas').filter(b => b.name !== 'THE FAULT' && b.name !== 'HOLLOW');
       const radii = planets.map(b => b.orbit!.radius).sort((a, b) => a - b);
       for (let i = 1; i < radii.length; i++) expect(radii[i] - radii[i - 1]).toBeGreaterThan(200);
       // moons clear their parent and each other
@@ -97,25 +94,11 @@ describe('simulation stability', () => {
       p.docked = null;
       const c = emptyControls();
       const steps = 120 * 150; // two and a half minutes
+      w.slices.pilgrimSpawnAt = 5;
       for (let i = 0; i < steps; i++) {
-        updateOrbits(w.bodies, w.time, SIM_DT);
-        updateStations(w, SIM_DT);
-        updateDirector(w, SIM_DT);
-        stepShip(w, p, c, SIM_DT);
-        for (const s of w.ships) {
-          if (s === p || !s.alive) continue;
-          const ac = updateAi(w, s, SIM_DT);
-          stepShip(w, s, ac, SIM_DT);
-          aiFire(w, s);
-        }
-        stepProjectiles(w, SIM_DT);
-        stepAsteroids(w, SIM_DT);
-        stepPickups(w, SIM_DT);
-        collide(w, SIM_DT);
-        pruneShips(w);
+        stepWorld(w, c, SIM_DT, { flight: true, fireSecondary: false, director: true, nearestEnemy: null });
         w.explosions.length = 0;
         w.audioEvents.length = 0;
-        w.time += SIM_DT; w.tick++;
         if (i % 600 === 0) {
           for (const s of w.ships) {
             expect(Number.isFinite(s.pos.x + s.pos.y + s.vel.x + s.vel.y + s.angle)).toBe(true);

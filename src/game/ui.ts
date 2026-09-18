@@ -16,6 +16,9 @@ const CONTROLS: [string, string][] = [
   ['Q / E', 'LATERAL JETS (UPGRADE)'],
   ['SPACE / CTRL / LEFT MOUSE', 'FIRE'],
   ['X', 'SEEKER MISSILE (UPGRADE)'],
+  ['T', 'CABLE: LATCH THE NEAREST THING, OR LET GO'],
+  ['R', 'PING: A SENSOR PULSE. WATCH WHAT COMES BACK'],
+  ['F (HOLD)', 'TRANSFER FUEL INTO WHAT YOU ARE LANDED ON OR TOUCHING'],
   ['MOUSE MOVE', 'STEER TOWARD CURSOR'],
   ['RIGHT MOUSE', 'BOOST'],
   ['M', 'SYSTEM MAP / SET COURSE'],
@@ -35,6 +38,7 @@ const TIPS: string[] = [
   'A GAS GIANT SKIM REFUELS YOU. GO DEEP AND IT CRUSHES YOU.',
   'YOU CANNOT SAVE EVERYONE. CHOOSE.',
   'THE STARFALL CORE SITS ON THE ENEMY WORLD (RED ON THE MAP) UNDER SENTINEL GUNS. KILL IT TO SECURE THE SYSTEM.',
+  'THE CABLE TAKES UP SLACK GENTLY AND PARTS IF YOU YANK IT. A HEAVY LOAD SWINGS. LET THE SWING WORK FOR YOU.',
 ];
 
 export function drawTitle(g: Game): void {
@@ -415,12 +419,12 @@ export function drawPause(g: Game): void {
   const s = g.dpr;
   dim(g, 0.5);
   drawText(H, 'PAUSED', W / 2, Hh * 0.42, 26 * s, C.amber[0], C.amber[1], C.amber[2], 0.95, 'center');
-  drawText(H, 'ESC: RESUME   ·   H: MANUAL   ·   M: MAP   ·   T: ABANDON PATROL', W / 2, Hh * 0.42 + 40 * s, 11 * s, C.white[0], C.white[1], C.white[2], 0.8, 'center');
+  drawText(H, 'ESC: RESUME   ·   H: MANUAL   ·   M: MAP   ·   X: ABANDON PATROL', W / 2, Hh * 0.42 + 40 * s, 11 * s, C.white[0], C.white[1], C.white[2], 0.8, 'center');
   const inp = g.input;
   if (inp.wasPressed('Escape') || inp.wasPressed('KeyP') || inp.wasPressed('GP9')) g.mode = 'flight';
   if (inp.wasPressed('KeyH')) { g.helpReturn = 'pause'; g.mode = 'help'; inp.consume('KeyH'); }
   if (inp.wasPressed('KeyM')) { g.mapReturn = 'pause'; g.mode = 'map'; inp.consume('KeyM'); }
-  if (inp.wasPressed('KeyT')) { g.world.gameOver = true; g.mode = 'gameover'; }
+  if (inp.wasPressed('KeyX')) { g.world.gameOver = true; g.mode = 'gameover'; }
 }
 
 export function padLabel(p: Pad): string { return p.name; }

@@ -3,7 +3,8 @@
 import { drawText, textWidth } from '../engine/font';
 import { angleDiff, clamp, TAU, type V2 } from '../engine/math';
 import type { Body, Pad } from '../sim/bodies';
-import { dominantBody, gravityAt, LAND_ANG, LAND_VN, LAND_VT } from '../sim/physics';
+import { dominantBody, gravityAt, LAND_ANG, LAND_VN, LAND_VT, surfaceInfo } from '../sim/physics';
+import { TETHER_BREAK } from '../sim/tether';
 import { hubRadius, localAngle } from '../sim/stations';
 import { hasSensors } from '../sim/upgrades';
 import type { GameEvent, Ship, Station, World } from '../sim/world';
@@ -94,6 +95,14 @@ export function drawFlightHud(g: Game): void {
   drawText(H, `CARGO ${load}/${p.cargo.capacity}  ORE ${p.cargo.ore}  SLV ${p.cargo.salvage}`, bx + bw + 18 * s, by + 64 * s, 10 * s, C.dim[0], C.dim[1], C.dim[2], 0.9);
   if (p.towing) drawText(H, 'TOWING POD', bx + bw + 18 * s, by + 48 * s, 10 * s, C.green[0], C.green[1], C.green[2], 0.7 + 0.3 * Math.sin(t * 4));
   if (p.secondary && p.secondary.ammo >= 0) drawText(H, `SEEKERS ${p.secondary.ammo}`, bx + bw + 18 * s, by + 32 * s, 10 * s, C.violet[0], C.violet[1], C.violet[2], 0.8);
+  if (p.tether) {
+    const t = p.tether;
+    const mass = t.kind === 'pickup' ? t.pickup!.mass : t.kind === 'asteroid' ? t.asteroid!.radius * t.asteroid!.radius * 2 : t.kind === 'ship' ? t.ship!.radius * t.ship!.radius * t.ship!.massMul : t.kind === 'body' && t.body!.free ? t.body!.bodyMass : Infinity;
+    const strain = t.tension / TETHER_BREAK;
+    const tc = strain < 0.35 ? C.cyan : strain < 0.7 ? C.amber : C.red;
+    const what = t.kind === 'pickup' ? t.pickup!.name || t.pickup!.kind.toUpperCase() : t.kind === 'asteroid' ? 'ROCK' : t.kind === 'ship' ? t.ship!.name : t.kind === 'station' ? t.station!.name : t.body!.name;
+    drawText(H, `CABLE ${what}  MASS ${mass === Infinity ? 'FIXED' : mass.toFixed(1)}  LOAD ${t.tension.toFixed(0)}`, bx + bw + 18 * s, by + 16 * s, 10 * s, tc[0], tc[1], tc[2], 0.9);
+  }
   drawText(H, p.weapon.kind.toUpperCase(), bx + bw + 18 * s, by, 10 * s, C.cyan[0], C.cyan[1], C.cyan[2], 0.6);
 
   // ---------------- readouts bottom-right
@@ -113,12 +122,11 @@ export function drawFlightHud(g: Game): void {
     if (b.landable && alt < 50) { landingBody = b; landingAlt = alt; }
     if (b.kind === 'star' && alt < b.heatRadius - b.radius) drawText(H, 'STELLAR HEAT', rx, Hh - 46 * s, 11 * s, C.red[0], C.red[1], C.red[2], 0.6 + 0.4 * Math.sin(t * 10), 'right');
   }
-  // ---------------- landing guidance
-  if (landingBody && !p.landed && p.alive) {
-    const b = landingBody;
-    const dx = p.pos.x - b.pos.x, dy = p.pos.y - b.pos.y;
-    const n = terrainNormalAt(b, Math.atan2(dy, dx));
-    const rvx = p.vel.x - b.vel.x, rvy = p.vel.y - b.vel.y;
+  // ---------------- landing guidance (walls inside fissures, rotating hulls included)
+  const si = !p.landed && p.alive ? surfaceInfo(w, p.pos.x, p.pos.y) : null;
+  if (si && si.alt < 50 && si.body.landable) {
+    const n = si.normal;
+    const rvx = p.vel.x - si.vsurf.x, rvy = p.vel.y - si.vsurf.y;
     const vnn = rvx * n.x + rvy * n.y;
     const vn = -vnn;
     const vt = Math.hypot(rvx - vnn * n.x, rvy - vnn * n.y);
@@ -132,7 +140,7 @@ export function drawFlightHud(g: Game): void {
     drawText(H, `DRIFT ${vt.toFixed(1)}`, cx, cy - 16 * s, 12 * s, c2[0], c2[1], c2[2], 0.95, 'center');
     drawText(H, `TILT ${(err * 57.3).toFixed(0)}°`, cx + 118 * s, cy - 16 * s, 12 * s, c3[0], c3[1], c3[2], 0.95, 'center');
     drawText(H, `LIMITS ${(LAND_VN * tol).toFixed(1)} / ${(LAND_VT * tol).toFixed(1)} / ${(LAND_ANG * tol * 57.3).toFixed(0)}°`, cx, cy + 2 * s, 8 * s, C.dim[0], C.dim[1], C.dim[2], 0.7, 'center');
-    void landingAlt;
+    void landingAlt; void landingBody;
   }
   if (p.landed) {
     const pad = p.landed.pad;
@@ -198,7 +206,7 @@ export function drawFlightHud(g: Game): void {
   const range = hasSensors(p) ? 1100 : 550;
   const rr = 62 * s;
   const rcx = W / 2, rcy = Hh - 64 * s - rr + 40 * s;
-  H.circle2(rcx, rcy, rr, 40, C.cyan[0], C.cyan[1], C.cyan[2], 0.35, 1.2);
+  H.circle2(rcx, rcy, rr, 40, C.cyan[0], C.cyan[1], C.cyan[2], 0.35 + w.hudFlicker, 1.2);
   H.circle2(rcx, rcy, rr * 0.5, 30, C.cyan[0], C.cyan[1], C.cyan[2], 0.15, 1);
   H.line2(rcx - 4 * s, rcy, rcx + 4 * s, rcy, C.cyan[0], C.cyan[1], C.cyan[2], 0.6, 1);
   H.line2(rcx, rcy - 4 * s, rcx, rcy + 4 * s, C.cyan[0], C.cyan[1], C.cyan[2], 0.6, 1);

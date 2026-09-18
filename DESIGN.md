@@ -91,6 +91,39 @@ Credits from bounties, event rewards, ore and salvage sales. Upgrades change cap
 stated trade-off (mass, burn, heat) and are spread across the three stations so shopping is a
 navigation decision. Five unique modules only come from derelicts and the Fault.
 
+## The vocabulary (vertical-slice pass)
+- **Cable** (T). A spring-damper rope, stiffness 120, just under critical damping, no push, parts
+  above 90 units of force or 4 units of stretch. Latches the nearest pickup, asteroid, ship, station
+  ring point or tetherable hull within 7 units; rest length is the latch distance (2.5–11). Loads
+  are real masses: crates 0.3, pods 0.5, the regulator 0.7, wrecks 2.5, rocks radius squared times
+  two, ships mass times radius squared, stations and hulls take torque at the attachment point
+  (station inertia 60 R squared; the Pilgrim 300 units of mass and a deliberately high inertia).
+  Pods are now towed on the cable instead of snapping to the ship.
+- **Ping** (R). A ring at 150 units per second to 460 units. Terrain edges flash as it sweeps them,
+  fissure walls flash for 2.6 seconds, dense objects blink, hollow bodies echo, enemies notice.
+- **Transfer** (F held). Fuel from the ship into a thruster tank you are landed on, or a stranded
+  ship you are touching. Six per second.
+- **Interiors**. Fissures are counter-clockwise outlines in a body's local frame with an open mouth
+  edge; inside one the walls are the surface and the polar profile is ignored; the dome mesh is cut
+  and the walls extruded down to a dark floor over bedrock. Gravity inside a body falls off
+  linearly toward the centre.
+- **Free and rotating bodies.** A body can ride gravity instead of rails, spin, carry pads and
+  thrusters that turn with it, and be landed on with the surface velocity accounted for.
+
+## The three slices
+- **The Cut.** A 50-unit fissure into the enemy world: shaft, dogleg, throat, chamber, regulator in a
+  magnetic socket. Carrying the regulator out (0.7 mass, two to three and a half units of weight
+  depending on depth) darkens every sentinel on that world for as long as it is away. Shooting it
+  shoves it a unit or two and the socket pulls it back.
+- **Pilgrim.** A 120-unit hull spawned at 3400 units on a numerically fitted plunge to a 250-unit
+  periapsis. Three thruster tanks: bow port and stern port make a couple (one alone spins the hull
+  and drifts it to starboard), the stern main pushes along the axis. Forty fuel per tank; the ship
+  carries a hundred. Towing works at about two and a half times the fuel cost and needs no landing.
+- **The signal / the Fault.** A hollow rock in the belt whose black box blips faster as you close,
+  echoes to a ping, and holds a cave with fragile walls, a dead Kestrel and a three-line log. The
+  Fault, the core, sentinels and the regulator all keep a three-second beat. Three on-beat pings
+  still every enemy for a minute; three off-beat pings call every enemy into the Fault's well.
+
 ## Rendering
 WebGL2, no textures, no external art. Instanced flat-shaded meshes with four-band quantised
 lighting from the star plus a faint camera fill. Lines are screen-space expanded quads with a

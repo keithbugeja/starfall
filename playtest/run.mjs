@@ -65,9 +65,12 @@ const LANDER_SRC = `
     const ux = rx / r, uy = ry / r;
     const ang = Math.atan2(ry, rx);
     const alt = r - pad.height;
-    const angErr = wrap(pad.angle - ang);
+    const padAng = pad.angle + (b.rotates ? b.spinAngle : 0);
+    const angErr = wrap(padAng - ang);
     const arc = angErr * r;
-    const rvx = p.vel.x - b.vel.x, rvy = p.vel.y - b.vel.y;
+    const om = b.free ? b.angVel : 0;
+    const svx = b.vel.x - om * ry, svy = b.vel.y + om * rx;
+    const rvx = p.vel.x - svx, rvy = p.vel.y - svy;
     const vr = rvx * ux + rvy * uy;
     const tx = -uy, ty = ux;
     const vt = rvx * tx + rvy * ty;
@@ -77,16 +80,19 @@ const LANDER_SRC = `
     if (Math.abs(arc) > 10) wantVr = (cruiseAlt - alt) * 0.3;
     else wantVr = -Math.max(1.2, Math.min(9, alt * 0.14));
     wantVr = Math.max(-9, Math.min(8, wantVr));
-    let gx = 0, gy = 0;
-    for (const bb of w.bodies) {
-      const dx = bb.pos.x - p.pos.x, dy = bb.pos.y - p.pos.y;
-      const d = Math.hypot(dx, dy);
-      if (d >= bb.soi) continue;
-      let a = bb.mass / Math.max(d, bb.radius * 0.6) ** 2;
-      const f = Math.max(0, Math.min(1, (bb.soi - d) / (bb.soi * 0.25)));
-      a *= f * f * (3 - 2 * f);
-      gx += dx / d * a; gy += dy / d * a;
+    const zeroG = b.mass <= 0;
+    if (zeroG && Math.abs(arc) < 4 && alt < 9) {
+      // no gravity to fall with: coast the last stretch nose-up at the closing rate we already have
+      const up = wrap(Math.atan2(uy, ux) - p.angle);
+      // lateral jets hold the pad under us on a turning hull; retro keeps a closing rate
+      const lateral = p.stats.strafe > 0 ? Math.max(-1, Math.min(1, -(wantVt - vt) * 0.8)) : 0;
+      sf.controls({ turn: Math.max(-1, Math.min(1, up * 3)), thrust: 0, retro: (p.stats.retro > 0 && vr > -0.8) ? 0.6 : 0, strafe: lateral, fire: false, boost: false });
+      sf.step(1);
+      if (t % 120 === 0) log.push({ t: (t / 120).toFixed(1), alt: alt.toFixed(1), arc: arc.toFixed(1), vr: vr.toFixed(2), vt: vt.toFixed(2), hErr: up.toFixed(2), hull: p.hull.toFixed(0), fuel: p.fuel.toFixed(0) });
+      continue;
     }
+    if (zeroG && Math.abs(arc) < 4) wantVr = -1.6;
+    const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
     const ex = (wantVr - vr), et = (wantVt - vt);
     let ax = (ux * ex + tx * et) * 1.6 - gx, ay = (uy * ex + ty * et) * 1.6 - gy;
     const am = Math.hypot(ax, ay);
@@ -219,16 +225,7 @@ const DOCK_SRC = `
     const dx = st.pos.x - p.pos.x, dy = st.pos.y - p.pos.y;
     const d = Math.hypot(dx, dy) || 1;
     const R = st.radius;
-    let gx = 0, gy = 0;
-    for (const bb of w.bodies) {
-      const ex = bb.pos.x - p.pos.x, ey = bb.pos.y - p.pos.y;
-      const dd = Math.hypot(ex, ey);
-      if (dd >= bb.soi) continue;
-      let a = bb.mass / Math.max(dd, bb.radius * 0.6) ** 2;
-      const f = Math.max(0, Math.min(1, (bb.soi - dd) / (bb.soi * 0.25)));
-      a *= f * f * (3 - 2 * f);
-      gx += ex / dd * a; gy += ey / dd * a;
-    }
+    const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
     const local = wrap(Math.atan2(p.pos.y - st.pos.y, p.pos.x - st.pos.x) - st.angle);
     let wantVx, wantVy;
     if (phase === 'approach') {
@@ -669,6 +666,426 @@ const moreScenarios = {
   },
 };
 Object.assign(scenarios, moreScenarios);
+
+
+/** In-page waypoint follower for tight spaces: gravity-compensated velocity control at low speed. */
+const FOLLOW_SRC = `
+  const w = sf.game.world, p = w.player;
+  const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+  const body = bodyName ? w.bodies.find(b => b.name === bodyName) : null;
+  const toWorld = (l) => { if (!body) return l; const c = Math.cos(body.rotates ? body.spinAngle : 0), s = Math.sin(body.rotates ? body.spinAngle : 0); return { x: body.pos.x + l.x * c - l.y * s, y: body.pos.y + l.x * s + l.y * c }; };
+  const log = [];
+  let idx = 0, t = 0, stuck = 0;
+  const grav = () => sf.gravity(p.pos.x, p.pos.y);
+  while (idx < pts.length && t < ticks && p.alive) {
+    const wp = toWorld(pts[idx]);
+    const refVel = body ? { x: body.vel.x, y: body.vel.y } : refVel0;
+    const dx = wp.x - p.pos.x, dy = wp.y - p.pos.y;
+    const d = Math.hypot(dx, dy) || 1e-6;
+    if (d < tol) { idx++; stuck = 0; continue; }
+    const [gx, gy] = grav();
+    const sp = Math.min(maxSpeed, Math.max(1.2, d * 0.5));
+    // reference frame: the body the waypoints belong to (its velocity)
+    const wantVx = refVel.x + dx / d * sp, wantVy = refVel.y + dy / d * sp;
+    const ax = (wantVx - p.vel.x) * gain - gx, ay = (wantVy - p.vel.y) * gain - gy;
+    const am = Math.hypot(ax, ay);
+    const c = { turn: 0, thrust: 0, retro: 0, strafe: 0, fire: false, boost: false };
+    if (am > 0.3) {
+      const heading = Math.atan2(ay, ax);
+      const err = wrap(heading - p.angle);
+      c.turn = Math.max(-1, Math.min(1, err * 4));
+      // lateral jets and retro if fitted let us keep the nose up
+      const fx = Math.cos(p.angle), fy = Math.sin(p.angle);
+      const fwd = ax * fx + ay * fy, lat = ax * fy - ay * fx;
+      if (p.stats.strafe > 0) c.strafe = Math.max(-1, Math.min(1, lat / p.stats.strafe));
+      if (p.stats.retro > 0 && fwd < 0) c.retro = Math.min(1, -fwd / p.stats.retro);
+      // a load on the cable needs proportionally more thrust
+      const loadK = p.tether && p.tether.tension > 0 ? 1 + (p.tether.pickup ? p.tether.pickup.mass : p.tether.asteroid ? p.tether.asteroid.radius * p.tether.asteroid.radius * 2 : 0) / (p.massMul * p.radius * p.radius) : 1;
+      if (Math.abs(err) < 0.45 && fwd > 0) c.thrust = Math.min(1, fwd * loadK / p.stats.thrust);
+    }
+    sf.controls(c);
+    sf.step(1);
+    t++;
+    if (t % 120 === 0) log.push({ t: (t / 120).toFixed(0), wp: idx, d: d.toFixed(1), hull: p.hull.toFixed(0), fuel: p.fuel.toFixed(0), spd: Math.hypot(p.vel.x - refVel.x, p.vel.y - refVel.y).toFixed(1), tension: p.tether ? p.tether.tension.toFixed(0) : '-' });
+    if (++stuck > 120 * 25) { log.push({ stuck: idx }); break; }
+  }
+  sf.controls(null);
+  return { log, reached: idx, of: pts.length, alive: p.alive, hull: p.hull, fuel: p.fuel, ticks: t, tethered: !!p.tether, peak: p.tether ? p.tether.peak : null };
+`;
+
+async function follow(page, pts, opts = {}) {
+  const { seconds = 120, tol = 2.2, maxSpeed = 4.5, gain = 2.2, refVel = { x: 0, y: 0 }, body = null } = opts;
+  return page.evaluate(([src, pts, ticks, tol, maxSpeed, gain, refVel0, bodyName]) => {
+    const f = new Function('sf', 'pts', 'ticks', 'tol', 'maxSpeed', 'gain', 'refVel0', 'bodyName', src);
+    return f(window.__sf, pts, ticks, tol, maxSpeed, gain, refVel0, bodyName);
+  }, [FOLLOW_SRC, pts, Math.round(seconds * 120), tol, maxSpeed, gain, refVel, body]);
+}
+
+/** Hold a heading and thrust for a while (for pull tests). */
+async function pull(page, heading, seconds, thrust = 1) {
+  return page.evaluate(([heading, ticks, thrust]) => {
+    const sf = window.__sf, w = sf.game.world, p = w.player;
+    const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+    let peak = 0, snapped = false;
+    for (let t = 0; t < ticks; t++) {
+      const err = wrap(heading - p.angle);
+      sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: Math.abs(err) < 0.3 ? thrust : 0, retro: 0, strafe: 0, fire: false, boost: false });
+      sf.step(1);
+      if (p.tether) peak = Math.max(peak, p.tether.tension); else if (peak > 0) snapped = true;
+    }
+    sf.controls(null);
+    return { peak, snapped, tethered: !!p.tether };
+  }, [heading, Math.round(seconds * 120), thrust]);
+}
+
+async function untether(page) { return page.evaluate(() => { const sf = window.__sf, p = sf.game.world.player; if (p.tether) sf.tether(); }); }
+async function probe(page, ticks) { return page.evaluate(([ticks]) => { const sf = window.__sf, p = sf.game.world.player; const out = []; for (let i = 0; i < ticks; i++) { sf.step(1); out.push(p.tether ? p.tether.tension.toFixed(0) : 'x'); } return out.join(' '); }, [ticks]); }
+
+const sliceScenarios = {
+  async tetherphys({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    let st = await api.state(page);
+    const home = st.bodies.find(b => b.kind === 'planet');
+    // ---- 1. tow a crate, then release it
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [home.x + 650, home.y]);
+    await untether(page);
+    await page.evaluate(() => window.__sf.spawnCrate(-7, 0, 'wreck'));
+    const ok = await page.evaluate(() => window.__sf.tether());
+    let sl = await page.evaluate(() => window.__sf.slice());
+    console.log('1. latch crate:', ok, sl.tether);
+    await page.evaluate(() => window.__sf.controls({ thrust: 1 }));
+    console.log('   tension per tick:', await probe(page, 40));
+    await page.evaluate(() => window.__sf.controls(null));
+    let r = await pull(page, 0, 3);
+    sl = await page.evaluate(() => window.__sf.slice());
+    console.log('   tether object peak', sl.tether && sl.tether.peak);
+    st = await api.state(page);
+    let crate = st.pickups.find(k => k.kind === 'wreck' && !k.name);
+    console.log('   after 3 s thrust: ship spd', st.player.speed.toFixed(1), 'crate spd', Math.hypot(crate.vx, crate.vy).toFixed(1), 'peak', r.peak.toFixed(0), 'snapped', r.snapped);
+    await page.evaluate(() => window.__sf.tether());
+    await api.run(page, {}, 2);
+    st = await api.state(page);
+    crate = st.pickups.find(k => k.kind === 'wreck' && !k.name);
+    console.log('   released: crate keeps spd', Math.hypot(crate.vx, crate.vy).toFixed(1), 'tethered', crate.tethered);
+    await api.shot(page, 'tether_crate', 10);
+    // ---- 2. yank: boost away from a slack crate
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [home.x + 650, home.y + 60]);
+    await untether(page);
+    await page.evaluate(() => window.__sf.spawnCrate(5, 0, 'wreck'));
+    await page.evaluate(() => window.__sf.tether());
+    r = await page.evaluate(() => { const sf = window.__sf, p = sf.game.world.player; sf.setVel(-16, 0); let peak = 0; for (let t = 0; t < 240; t++) { sf.step(1); if (p.tether) peak = Math.max(peak, p.tether.tension); } return { peak, tethered: !!p.tether }; });
+    console.log('2. yank at 16 u/s: peak', r.peak.toFixed(0), 'still tethered', r.tethered);
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [home.x + 650, home.y + 120]);
+    await untether(page);
+    await page.evaluate(() => window.__sf.spawnCrate(5, 0, 'wreck'));
+    await page.evaluate(() => window.__sf.tether());
+    r = await page.evaluate(() => { const sf = window.__sf, p = sf.game.world.player; sf.setVel(-6, 0); let peak = 0; for (let t = 0; t < 240; t++) { sf.step(1); if (p.tether) peak = Math.max(peak, p.tether.tension); } return { peak, tethered: !!p.tether }; });
+    console.log('   yank at 6 u/s: peak', r.peak.toFixed(0), 'still tethered', r.tethered);
+    // ---- 3. pendulum in gravity: hover above the colony with a crate hanging
+    const pad = home.pads.find(q => q.kind === 'colony');
+    const hx = home.x + Math.cos(pad.angle) * (home.r + 30), hy = home.y + Math.sin(pad.angle) * (home.r + 30);
+    await page.evaluate(([x, y, a]) => window.__sf.teleport(x, y, 0, 0, a), [hx, hy, pad.angle]);
+    await untether(page);
+    await page.evaluate(([dx, dy]) => window.__sf.spawnCrate(dx, dy, 'wreck'), [-Math.cos(pad.angle) * 5 + Math.sin(pad.angle) * 4, -Math.sin(pad.angle) * 5 - Math.cos(pad.angle) * 4]);
+    console.log('3. latch', await page.evaluate(() => window.__sf.tether()));
+    const swing = await page.evaluate(([ux, uy]) => {
+      const sf = window.__sf, w = sf.game.world, p = w.player;
+      const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+      const angles = [];
+      for (let t = 0; t < 120 * 12; t++) {
+        // hover: cancel gravity and hold velocity zero relative to the planet
+        const b = w.bodies.find(x => x.kind === 'planet');
+        const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+        const ax = (b.vel.x - p.vel.x) * 2 - gx, ay = (b.vel.y - p.vel.y) * 2 - gy;
+        const heading = Math.atan2(ay, ax), err = wrap(heading - p.angle);
+        sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: Math.abs(err) < 0.4 ? Math.min(1, Math.hypot(ax, ay) / p.stats.thrust) : 0, retro: 0, strafe: 0, fire: false, boost: false });
+        sf.step(1);
+        if (t % 30 === 0 && p.tether && p.tether.pickup) { const k = p.tether.pickup; const dx = k.pos.x - p.pos.x, dy = k.pos.y - p.pos.y; angles.push(((Math.atan2(dy, dx) - Math.atan2(-uy, -ux)) * 57.3).toFixed(0)); }
+      }
+      sf.controls(null);
+      return { angles, tension: p.tether ? p.tether.tension.toFixed(1) : null, alive: p.alive };
+    }, [Math.cos(pad.angle), Math.sin(pad.angle)]);
+    console.log('3. pendulum angles from straight-down (deg, every 0.25 s):', swing.angles.join(' '), '| tension', swing.tension);
+    await api.shot(page, 'tether_pendulum', 10);
+    // ---- 4. tow a rock
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [home.x + 650, home.y + 180]);
+    await untether(page);
+    await page.evaluate(() => window.__sf.spawnRock(-8, 0, 2));
+    const okR = await page.evaluate(() => window.__sf.tether());
+    sl = await page.evaluate(() => window.__sf.slice());
+    console.log('   rock latch', okR, JSON.stringify(sl.tether));
+    r = await pull(page, 0, 6);
+    st = await api.state(page);
+    console.log('4. rock tow:', sl.tether && sl.tether.kind, 'ship spd after 6 s', st.player.speed.toFixed(1), 'peak', r.peak.toFixed(0), 'snapped', r.snapped);
+    // ---- 5. slow a station's spin by pulling on the ring
+    const hs = st.stations[0];
+    await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [hs.x + (hs.r + 2.4), hs.y, hs.vx, hs.vy, 0]);
+    const spin0 = hs.spin;
+    await untether(page);
+    const okS = await page.evaluate(() => window.__sf.tether());
+    sl = await page.evaluate(() => window.__sf.slice());
+    // pull against the spin: for positive spin the ring point moves +y at our position (x = +R), so pull toward -y
+    const tor = await page.evaluate(([dir, ticks]) => {
+      const sf = window.__sf, w = sf.game.world, p = w.player, st = w.stations[0];
+      const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+      let peak = 0; const log = [];
+      for (let t = 0; t < ticks; t++) {
+        // heading: tangential, against the ring's motion at our current position
+        const rx = p.pos.x - st.pos.x, ry = p.pos.y - st.pos.y;
+        const heading = Math.atan2(-rx * dir, ry * dir);
+        const err = wrap(heading - p.angle);
+        sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: Math.abs(err) < 0.3 ? 1 : 0, retro: 0, strafe: 0, fire: false, boost: false });
+        sf.step(1);
+        if (p.tether) peak = Math.max(peak, p.tether.tension);
+        if (t % 360 === 0) log.push({ t: t / 120, spin: st.spin.toFixed(4), tension: p.tether ? p.tether.tension.toFixed(1) : '-', stretch: p.tether ? p.tether.stretch.toFixed(2) : '-', spd: Math.hypot(p.vel.x - st.vel.x, p.vel.y - st.vel.y).toFixed(1) });
+      }
+      sf.controls(null);
+      return { spin: st.spin, peak, tethered: !!p.tether, hull: p.hull, log };
+    }, [Math.sign(spin0), 120 * 25]);
+    console.log('5. station spin:', spin0.toFixed(3), '->', tor.spin.toFixed(3), 'latched', okS, sl.tether && sl.tether.kind, 'peak', tor.peak.toFixed(0), 'tethered', tor.tethered, 'hull', tor.hull.toFixed(0));
+    console.log('   ', tor.log.map(l => `${l.t}s spin=${l.spin} T=${l.tension} ext=${l.stretch} v=${l.spd}`).join(' | '));
+    await api.shot(page, 'tether_station', 10);
+  },
+
+  async cut({ page }) {
+    await api.manual(page, true);
+    for (const fit of ['stock', 'jets']) {
+      await api.newGame(page, 2024);
+      await api.launch(page);
+      if (fit === 'jets') await page.evaluate(() => window.__sf.buyAll());
+      let sl = await page.evaluate(() => window.__sf.slice());
+      const cut = sl.cut;
+      const path = cut.path;
+      const mouth = path[0];
+      const ox = mouth.x - cut.bodyPos.x, oy = mouth.y - cut.bodyPos.y, ol = Math.hypot(ox, oy);
+      const ux = ox / ol, uy = oy / ol;
+      const bodyVel = await page.evaluate(() => { const b = window.__sf.game.world.slices.cutBody; return { x: b.vel.x, y: b.vel.y }; });
+      await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [mouth.x + ux * 40, mouth.y + uy * 40, bodyVel.x, bodyVel.y, Math.atan2(uy, ux)]);
+      await api.shot(page, 'cut_' + fit + '_above', 60);
+      await page.evaluate(() => window.__sf.ping());
+      await api.run(page, {}, 1.2);
+      await api.shot(page, 'cut_' + fit + '_ping', 5);
+      const t0 = (await api.state(page)).time;
+      const down = await follow(page, cut.pathLocal, { seconds: 150, tol: 2.0, maxSpeed: fit === 'jets' ? 6 : 4.5, gain: 2.4, body: cut.body });
+      let st = await api.state(page);
+      console.log(fit, 'DESCENT: reached', down.reached, '/', down.of, 'alive', down.alive, 'hull', down.hull.toFixed(0), 'fuel', down.fuel.toFixed(0), 'time', (st.time - t0).toFixed(0), 's');
+      if (down.reached < down.of) console.log(down.log.slice(-4));
+      await api.shot(page, 'cut_' + fit + '_chamber', 30);
+      if (!down.alive) continue;
+      // latch the regulator
+      const latched = await page.evaluate(() => window.__sf.tether());
+      sl = await page.evaluate(() => window.__sf.slice());
+      console.log('   latch:', latched, sl.tether && sl.tether.kind, sl.cut.regulator && sl.cut.regulator.tethered);
+      const t1 = st.time;
+      const m0 = cut.pathLocal[0], ml = Math.hypot(m0.x, m0.y);
+      const up = await follow(page, cut.pathLocal.slice().reverse().concat([{ x: m0.x + m0.x / ml * 30, y: m0.y + m0.y / ml * 30 }]), { seconds: 200, tol: 2.4, maxSpeed: fit === 'jets' ? 5 : 3.8, gain: 2.0, body: cut.body });
+      st = await api.state(page);
+      sl = await page.evaluate(() => window.__sf.slice());
+      console.log('   CLIMB: reached', up.reached, '/', up.of, 'alive', up.alive, 'hull', up.hull.toFixed(0), 'fuel', up.fuel.toFixed(0), 'time', (st.time - t1).toFixed(0), 's', 'still tethered', up.tethered, 'peak tension', up.peak, 'powered', sl.cut.powered, 'reg socket dist', sl.cut.regulator.socketDist.toFixed(1));
+      console.log(up.log.slice(-8).map(l => `${l.t}s wp${l.wp} d${l.d} hull${l.hull} spd${l.spd} T${l.tension}`).join(' | '));
+      await api.shot(page, 'cut_' + fit + '_out', 30);
+    }
+    // alternative: shoot the regulator out of its socket from inside the chamber
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    let sl = await page.evaluate(() => window.__sf.slice());
+    const path = sl.cut.path;
+    const bodyVel = await page.evaluate(() => { const b = window.__sf.game.world.slices.cutBody; return { x: b.vel.x, y: b.vel.y }; });
+    const ch = path[path.length - 3];
+    await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [ch.x, ch.y, bodyVel.x, bodyVel.y]);
+    const shoot = await page.evaluate(([ticks]) => {
+      const sf = window.__sf, w = sf.game.world, p = w.player, S = w.slices;
+      const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+      const log = [];
+      for (let t = 0; t < ticks; t++) {
+        const r = S.regulator;
+        const aim = Math.atan2(r.pos.y - p.pos.y, r.pos.x - p.pos.x);
+        const err = wrap(aim - p.angle);
+        const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+        // alternate: hover bursts (nose against gravity) and aiming
+        const hoverHeading = Math.atan2(-gy, -gx);
+        const hover = (t % 60) < 25;
+        const want = hover ? hoverHeading : aim;
+        const e2 = wrap(want - p.angle);
+        sf.controls({ turn: Math.max(-1, Math.min(1, e2 * 4)), thrust: hover && Math.abs(e2) < 0.4 ? 1 : 0, retro: 0, strafe: 0, fire: !hover && Math.abs(err) < 0.1, boost: false });
+        sf.step(1);
+        if (t % 120 === 0) { const sp = window.__sf.slice(); log.push({ t: t / 120, socket: sp.cut.regulator.socketDist.toFixed(1), powered: sp.cut.powered, hull: p.hull.toFixed(0) }); }
+      }
+      sf.controls(null);
+      return log;
+    }, [120 * 20]);
+    console.log('SHOOT ALTERNATIVE:', shoot.map(l => `${l.t}s d=${l.socket} pow=${l.powered ? 1 : 0}`).join(' | '));
+  },
+
+  async pilgrim({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.spawnPilgrim());
+    await api.step(page, 2);
+    let sl = await page.evaluate(() => window.__sf.slice());
+    const P = sl.pilgrim;
+    console.log('spawned: star dist', P.starDist.toFixed(0), 'speed', Math.hypot(P.vx, P.vy).toFixed(1), 'peri', sl.pilgrimPeri.toFixed(0), 'thrusters', P.thrusters.map(t => t.name).join(', '));
+    await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x + 90, y + 40, vx, vy, Math.PI), [P.x, P.y, P.vx, P.vy]);
+    await api.shot(page, 'pilgrim_approach', 60);
+    // land on the stern port tank
+    let res = await autoLand(page, 'PILGRIM', 'STERN PORT TANK', 120);
+    let st = await api.state(page);
+    console.log('LAND stern port:', res.landed ? 'OK' : (res.alive ? 'NOT LANDED' : 'DEAD'), 'hull', res.hull.toFixed(0), 'touch', res.crashSpeed.toFixed(2), 'time', st.time.toFixed(0));
+    if (!res.landed) console.log(res.log.slice(-5));
+    await api.shot(page, 'pilgrim_landed', 40);
+    // transfer 40 fuel
+    await page.evaluate(() => window.__sf.transfer(true));
+    await api.run(page, {}, 8);
+    await page.evaluate(() => window.__sf.transfer(false));
+    sl = await page.evaluate(() => window.__sf.slice());
+    console.log('after transfer: tanks', sl.pilgrim.thrusters.map(t => t.name.split(' ')[0] + ':' + t.fuel.toFixed(0)).join(' '), 'player fuel', (await api.state(page)).player.fuel.toFixed(0), 'angVel', sl.pilgrim.angVel.toFixed(4));
+    for (let i = 0; i < 5; i++) {
+      await api.run(page, {}, 10);
+      sl = await page.evaluate(() => window.__sf.slice());
+      console.log(`  +${(i + 1) * 10}s angVel ${sl.pilgrim.angVel.toFixed(4)} spd ${Math.hypot(sl.pilgrim.vx, sl.pilgrim.vy).toFixed(2)} peri ${sl.pilgrimPeri.toFixed(0)} tank ${sl.pilgrim.thrusters[1].fuel.toFixed(0)} landed ${(await api.state(page)).player.landed ? 'y' : 'n'}`);
+    }
+    await api.shot(page, 'pilgrim_burn', 30);
+    // counter the spin with the bow port tank, then push with the stern main
+    await api.run(page, { thrust: 1 }, 1.2);
+    await page.evaluate(() => window.__sf.refuel());
+    await page.evaluate(() => window.__sf.buyAll());
+    console.log('(fitting lateral jets and retro for the spinning-hull landings)');
+    res = await autoLand(page, 'PILGRIM', 'BOW PORT TANK', 120);
+    console.log('LAND bow port:', res.landed ? 'OK' : (res.alive ? 'NOT LANDED' : 'DEAD'), 'hull', res.hull.toFixed(0));
+    if (!res.landed) console.log(res.log.slice(-6).map(l => `${l.t}s alt${l.alt} arc${l.arc} vr${l.vr} vt${l.vt}`).join(' | '));
+    if (res.landed) { await page.evaluate(() => window.__sf.transfer(true)); await api.run(page, {}, 8); await page.evaluate(() => window.__sf.transfer(false)); }
+    for (let i = 0; i < 4; i++) { await api.run(page, {}, 10); sl = await page.evaluate(() => window.__sf.slice()); console.log(`  +${(i + 1) * 10}s angVel ${sl.pilgrim.angVel.toFixed(4)} peri ${sl.pilgrimPeri.toFixed(0)}`); }
+    await api.run(page, { thrust: 1 }, 1.2);
+    await page.evaluate(() => window.__sf.refuel());
+    res = await autoLand(page, 'PILGRIM', 'STERN MAIN TANK', 120);
+    console.log('LAND stern main:', res.landed ? 'OK' : (res.alive ? 'NOT LANDED' : 'DEAD'), 'hull', res.hull.toFixed(0), 'player fuel', res.fuel.toFixed(0));
+    if (!res.landed) console.log(res.log.slice(-6).map(l => `${l.t}s alt${l.alt} arc${l.arc} vr${l.vr} vt${l.vt}`).join(' | '));
+    if (res.landed) { await page.evaluate(() => window.__sf.transfer(true)); await api.run(page, {}, 8); await page.evaluate(() => window.__sf.transfer(false)); }
+    for (let i = 0; i < 6; i++) { await api.run(page, {}, 10); sl = await page.evaluate(() => window.__sf.slice()); console.log(`  +${(i + 1) * 10}s angVel ${sl.pilgrim.angVel.toFixed(4)} peri ${sl.pilgrimPeri.toFixed(0)} saved ${sl.pilgrim.saved}`); }
+    st = await api.state(page);
+    console.log('comms:', st.comms.slice(-4));
+    await api.shot(page, 'pilgrim_end', 30);
+    // ---- tow alternative
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.spawnPilgrim());
+    await api.step(page, 2);
+    sl = await page.evaluate(() => window.__sf.slice());
+    const Q = sl.pilgrim;
+    const sx = Q.x, sy = Q.y;
+    const away = Math.atan2(Q.vy, Q.vx); // prograde: push along the hull's motion to raise its periapsis
+    // stand just off the bow tank and latch onto the hull there
+    const bp = Q.thrusters[0].pad;
+    const bx = bp.x - sx, by = bp.y - sy, bl = Math.hypot(bx, by);
+    await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [bp.x + bx / bl * 4, bp.y + by / bl * 4, Q.vx, Q.vy, away]);
+    await untether(page);
+    const latched = await page.evaluate(() => window.__sf.tether());
+    sl = await page.evaluate(() => window.__sf.slice());
+    console.log('TOW: latched', latched, sl.tether && sl.tether.kind, 'peri0', sl.pilgrimPeri.toFixed(0));
+    const peri0 = sl.pilgrimPeri;
+    console.log('  tow probe (T per 0.5 s):', await page.evaluate(([h]) => { const sf = window.__sf, w = sf.game.world, p = w.player; const wrap = a => Math.atan2(Math.sin(a), Math.cos(a)); const out = []; for (let t = 0; t < 120 * 12; t++) { const err = wrap(h - p.angle); sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: Math.abs(err) < 0.3 ? 1 : 0 }); sf.step(1); if (t % 60 === 0) out.push(p.tether ? `T${p.tether.tension.toFixed(0)}/e${p.tether.stretch.toFixed(2)}/L${p.tether.length.toFixed(1)}` : 'x'); } sf.controls(null); return out.join(' '); }, [away]));
+    for (let i = 0; i < 6; i++) {
+      const r = await pull(page, away, 15, 1);
+      sl = await page.evaluate(() => window.__sf.slice());
+      console.log(`  tow ${(i + 1) * 15}s: peri ${sl.pilgrimPeri.toFixed(0)} (+${(sl.pilgrimPeri - peri0).toFixed(0)}) tension peak ${r.peak.toFixed(0)} snapped ${r.snapped} hull spd ${Math.hypot(sl.pilgrim.vx, sl.pilgrim.vy).toFixed(2)} fuel ${(await api.state(page)).player.fuel.toFixed(0)}`);
+      if (r.snapped) break;
+    }
+    await api.shot(page, 'pilgrim_tow', 20);
+  },
+
+  async signal({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    let sl = await page.evaluate(() => window.__sf.slice());
+    const R = sl.signal.rock;
+    const box = sl.signal.box;
+    for (const d of [1500, 700, 250]) {
+      await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [box.x + d, box.y, R.vx, R.vy]);
+      await page.evaluate(() => window.__sf.audio());
+      await api.run(page, {}, 10);
+      const log = await page.evaluate(() => window.__sf.audio());
+      console.log(`beacon at ${d}u: ${log.filter(k => k === 'blip').length} blips in 10 s`);
+    }
+    // ping from 200 units: expect an echo ring from the hollow rock
+    sl = await page.evaluate(() => window.__sf.slice());
+    const R2 = sl.signal.rock;
+    await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [R2.x + 200, R2.y, R2.vx, R2.vy]);
+    await page.evaluate(() => window.__sf.ping());
+    await api.run(page, {}, 0.5);
+    const p1 = (await page.evaluate(() => window.__sf.slice())).pings;
+    await api.run(page, {}, 1.4);
+    const p2 = (await page.evaluate(() => window.__sf.slice())).pings;
+    const log = await page.evaluate(() => window.__sf.audio());
+    console.log('ping near the rock: rings', p1, '->', p2, 'audio', log.filter(k => k === 'echo' || k === 'ping').join(','));
+    await api.shot(page, 'signal_ping', 3);
+    // into the cave
+    sl = await page.evaluate(() => window.__sf.slice());
+    const path = sl.signal.rock.path;
+    const mouth = path[0];
+    const rx = mouth.x - sl.signal.rock.x, ry = mouth.y - sl.signal.rock.y, rl = Math.hypot(rx, ry);
+    await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [mouth.x + rx / rl * 25, mouth.y + ry / rl * 25, sl.signal.rock.vx, sl.signal.rock.vy, Math.atan2(ry, rx)]);
+    await api.shot(page, 'signal_mouth', 40);
+    const inn = await follow(page, sl.signal.rock.pathLocal, { seconds: 120, tol: 2.0, maxSpeed: 4, gain: 2.4, body: 'HOLLOW' });
+    let st = await api.state(page);
+    sl = await page.evaluate(() => window.__sf.slice());
+    console.log('CAVE: reached', inn.reached, '/', inn.of, 'alive', inn.alive, 'hull', inn.hull.toFixed(0), 'box alive', sl.signal.box.alive, 'log line', sl.signal.logLine);
+    await api.shot(page, 'signal_cave', 30);
+    await api.run(page, {}, 16);
+    st = await api.state(page);
+    sl = await page.evaluate(() => window.__sf.slice());
+    console.log('log played', sl.signal.logPlayed, st.comms.filter(c => c.startsWith('KESTREL SEVEN')));
+    // fragile walls: fire inside
+    const a0 = st.asteroids;
+    await api.run(page, { fire: true, turn: 0.2 }, 2);
+    st = await api.state(page);
+    console.log('shots inside the cave: asteroids', a0, '->', st.asteroids, 'hull', st.player.hull.toFixed(0));
+    await api.shot(page, 'signal_rubble', 20);
+  },
+
+  async fault({ page }) {
+    await api.manual(page, true);
+    for (const mode of ['still', 'call']) {
+      await api.newGame(page, 2024);
+      await api.launch(page);
+      const st0 = await api.state(page);
+      const F = st0.bodies.find(b => b.name === 'THE FAULT');
+      // sit in a circular orbit 130 out, with the Fault's own velocity added
+      const fv = await page.evaluate(() => { const f = window.__sf.game.world.slices.fault; return { x: f.vel.x, y: f.vel.y, m: f.mass }; });
+      const rr = 130, v = Math.sqrt(fv.m / rr);
+      await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x, y, vx, vy, 0), [F.x + rr, F.y, fv.x, fv.y + v]);
+      const enemies0 = st0.ships.filter(s => s.faction === 'enemy' && s.kind !== 'sentinel').length;
+      const targetPhase = mode === 'still' ? (3 - rr / 150) / 3 : (1.5 - rr / 150) / 3;
+      const res = await page.evaluate(([targetPhase]) => {
+        const sf = window.__sf, w = sf.game.world;
+        const out = [];
+        for (let n = 0; n < 3; n++) {
+          // wait for the phase window
+          let guard = 0;
+          while (Math.abs(((w.time % 3) / 3) - targetPhase) > 0.012 && guard++ < 800) sf.step(1);
+          sf.ping();
+          const t = w.time;
+          for (let i = 0; i < 360; i++) sf.step(1);
+          const s = sf.slice();
+          out.push({ pingedAt: (t % 3 / 3).toFixed(3), onBeat: s.fault.onBeat, offBeat: s.fault.offBeat, answer: s.fault.answer });
+        }
+        return out;
+      }, [targetPhase]);
+      console.log(mode.toUpperCase(), 'pings:', res.map(r => `ph=${r.pingedAt} on=${r.onBeat} off=${r.offBeat} ans=${r.answer}`).join(' | '));
+      await api.shot(page, 'fault_' + mode, 5);
+      await api.run(page, {}, 45);
+      const st = await api.state(page);
+      const sl = await page.evaluate(() => window.__sf.slice());
+      const enemies = st.ships.filter(s => s.faction === 'enemy' && s.kind !== 'sentinel');
+      console.log(`  after 45 s: enemies ${enemies0} -> ${enemies.length}, stunned ${enemies.filter(s => s.mode).length ? enemies.map(s => s.kind[0] + ':' + s.mode).join(' ') : '-'}, answer ${sl.fault.answer}`);
+      console.log('  comms:', st.comms.slice(-3));
+    }
+  },
+};
+Object.assign(scenarios, sliceScenarios);
 
 const { browser, page, errors } = await launch();
 try {

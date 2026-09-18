@@ -7,6 +7,7 @@ import { createStation } from '../sim/stations';
 import { createEmptyWorld, createShip, type World } from '../sim/world';
 import { makeNamer } from './names';
 import { spawnAiShip } from '../sim/ai';
+import { authorSlices } from '../sim/slices';
 
 const PALETTES: Record<string, { low: number[]; mid: number[]; high: number[] }> = {
   rock: { low: [0.36, 0.28, 0.24], mid: [0.58, 0.48, 0.38], high: [0.74, 0.7, 0.64] },
@@ -272,6 +273,11 @@ export function generateSystem(seed: number, seedName: string): World {
     const f = spawnAiShip(w, 'freighter', 'civ', fb.pos.x + Math.cos(a) * (fb.radius * 1.6 + 30), fb.pos.y + Math.sin(a) * (fb.radius * 1.6 + 30), a, 'travel', null);
     f.ai!.home = rng.pick(w.stations);
   }
+
+  // ---------------- hand-authored experiences
+  authorSlices(w);
+  // the hollow rock sits in the belt: nothing starts inside it either
+  w.asteroids = w.asteroids.filter(a => w.bodies.every(b => Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.maxRadius + a.radius + 3));
 
   // ---------------- player: docked at the harbour
   const player = createShip(w, 'kestrel', 'player', harbour.pos.x, harbour.pos.y, 0);

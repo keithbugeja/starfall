@@ -11,11 +11,14 @@ import { ParticleSystem, StaticPoints } from '../engine/particles';
 import { PostPipeline } from '../engine/post';
 import { buildAsteroidMesh, buildPickupMesh, buildPlanetMesh, buildShipMesh, buildStarMesh, buildStationMesh } from '../gen/meshes';
 import { generateSystem } from '../gen/system';
-import { aiFire, pruneShips, updateAi } from '../sim/ai';
-import { maxTerrainRadius, terrainNormalAt, terrainRadiusAt, updateOrbits, type Body } from '../sim/bodies';
-import { updateDirector } from '../sim/director';
-import { applyModule, collide, fireWeapon, gravityAt, LAND_VN, predictTrajectory, stepAsteroids, stepPickups, stepProjectiles, stepShip, type Trajectory } from '../sim/physics';
-import { stationContact, undock, updateStations } from '../sim/stations';
+import { maxTerrainRadius, padWorldAngle, padWorldPos, terrainNormalAt, terrainRadiusAt, type Body } from '../sim/bodies';
+import { gravityAt, LAND_VN, predictTrajectory, type Trajectory } from '../sim/physics';
+import { stepWorld } from '../sim/step';
+import { attach, release, tetherEnd, TETHER_BREAK } from '../sim/tether';
+import { emitPing, PING_COOLDOWN } from '../sim/ping';
+import { tideGlow } from '../sim/slices';
+import { bodyToWorld } from '../sim/walls';
+import { undock } from '../sim/stations';
 import { applyUpgrades } from '../sim/upgrades';
 import { comm, sfx, SIM_DT, type Ship, type ShipKind, type World } from '../sim/world';
 import { drawFlightHud, navPos, type NavTarget } from './hud';
@@ -82,6 +85,9 @@ export class Game {
   private titleOrbit = 0;
   muted = false;
   private fireSecondary = false;
+  private lastPingAt = -1e9;
+  harnessTransfer = false;
+  audioLog: string[] = [];
 
   constructor(public canvas: HTMLCanvasElement) {
     this.gl = createGL(canvas);
@@ -93,7 +99,7 @@ export class Game {
     this.post = new PostPipeline(this.gl, this.camera.viewportW, this.camera.viewportH);
     window.addEventListener('resize', () => this.resize());
     this.starfield = new StaticPoints(this.gl, makeStarfield(777));
-    for (const k of ['pod', 'ore', 'salvage', 'fuel', 'module', 'wreck']) this.pickupMeshes.set(k, this.meshes.create(buildPickupMesh(k), 64));
+    for (const k of ['pod', 'ore', 'salvage', 'fuel', 'module', 'wreck', 'prop', 'log']) this.pickupMeshes.set(k, this.meshes.create(buildPickupMesh(k), 64));
     for (let i = 0; i < 10; i++) this.asteroidMeshes.push(this.meshes.create(buildAsteroidMesh(1000 + i, false), 64));
     for (let i = 0; i < 6; i++) this.asteroidMeshesSmall.push(this.meshes.create(buildAsteroidMesh(2000 + i, true), 64));
     for (const k of ['kestrel', 'wasp', 'lancer', 'reaver', 'freighter', 'dreadnought', 'shuttle', 'sentinel'] as ShipKind[]) this.shipMeshes.set(k, this.meshes.create(buildShipMesh(k), 16));
@@ -219,7 +225,15 @@ export class Game {
   private handleGlobalKeys(): void {
     const inp = this.input;
     if (inp.wasPressed('Digit0') && this.mode !== 'title') { this.muted = !this.muted; this.audio.setMuted(this.muted); }
-    if (this.mode === 'flight' && (inp.wasPressed('KeyX') || inp.wasPressed('GP2'))) this.fireSecondary = true;
+    if (this.mode === 'flight' && (inp.wasPressed('KeyX') || inp.wasPressed('GP11'))) this.fireSecondary = true;
+    if (this.mode === 'flight' && (inp.wasPressed('KeyT') || inp.wasPressed('GP3'))) {
+      const p = this.world.player;
+      if (p.alive && !p.docked) { if (p.tether) release(this.world, p); else attach(this.world, p); }
+    }
+    if (this.mode === 'flight' && (inp.wasPressed('KeyR') || inp.wasPressed('GP2'))) {
+      const p = this.world.player;
+      if (p.alive && !p.docked && this.world.time - this.lastPingAt > PING_COOLDOWN) { this.lastPingAt = this.world.time; emitPing(this.world, p.pos.x, p.pos.y); }
+    }
     if (this.mode === 'flight') {
       if (inp.wasPressed('KeyM') || inp.wasPressed('GP8')) { this.mapReturn = 'flight'; this.mode = 'map'; sfx(this.world, 'ui'); inp.consume('KeyM'); inp.consume('GP8'); }
       else if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { this.helpReturn = 'flight'; this.mode = 'help'; inp.consume('KeyH'); inp.consume('F1'); }
@@ -270,41 +284,12 @@ export class Game {
     const w = this.world;
     const c = this.playerControls();
     this.lastControls = c;
-    updateOrbits(w.bodies, w.time, dt);
-    updateStations(w, dt);
-    if (this.mode !== 'title') updateDirector(w, dt);
     const p = w.player;
-    // player
-    stepShip(w, p, c, dt);
-    if (p.fireCooldown > 0) p.fireCooldown -= dt;
-    if (c.fire && p.alive && !p.landed && !p.docked && !p.boosting && this.mode === 'flight') fireWeapon(w, p, p.weapon);
-    if (this.fireSecondary) {
-      this.fireSecondary = false;
-      if (p.secondary && p.alive && !p.docked && !p.landed) {
-        const tgt = nearestEnemyShip(w, 400);
-        const cd = p.fireCooldown; p.fireCooldown = 0;
-        if (p.secondary.ammo > 0) { fireWeapon(w, p, p.secondary, tgt); } else sfx(w, 'deny');
-        p.fireCooldown = Math.max(cd, 0.2);
-      }
-    }
-    // AI ships
-    for (const s of w.ships) {
-      if (s === p || !s.alive) continue;
-      const ac = updateAi(w, s, dt);
-      stepShip(w, s, ac, dt);
-      aiFire(w, s);
-    }
-    stepProjectiles(w, dt);
-    stepAsteroids(w, dt);
-    stepPickups(w, dt);
-    collide(w, dt);
-    for (const s of w.ships) {
-      if (!s.alive || s.docked) continue;
-      for (const st of w.stations) {
-        if (stationContact(w, s, st) && s === p) { this.mode = 'docked'; this.menuIndex = 0; }
-      }
-    }
-    this.landedServices(dt);
+    p.transferHeld = this.harnessTransfer || (this.mode === 'flight' && !this.input.override && (this.input.down('KeyF') || this.input.gpButton(5) > 0.5));
+    const fire2 = this.fireSecondary;
+    this.fireSecondary = false;
+    const docked = stepWorld(w, c, dt, { flight: this.mode === 'flight', fireSecondary: fire2, director: this.mode !== 'title', nearestEnemy: nearestEnemyShip(w, 400) });
+    if (docked) { this.mode = 'docked'; this.menuIndex = 0; }
     if (p.docked && !p.docked.alive) {
       // the station died under us: thrown clear with a warning
       const st = p.docked;
@@ -316,19 +301,19 @@ export class Game {
       comm(w, 'KESTREL', `${st.name} IS BREAKING UP. EMERGENCY LAUNCH.`, [1, 0.5, 0.3], 3);
       w.screenShake = 1;
     }
-    pruneShips(w);
     this.checkDeath(dt);
     // consume sim-side effects
     for (const e of w.explosions) this.spawnExplosion(e.pos.x, e.pos.y, e.size, e.color);
     w.explosions.length = 0;
     const g: V2 = { x: 0, y: 0 };
     const gm = gravityAt(w, p.pos.x, p.pos.y, g);
+    if (this.manual) { for (const e of w.audioEvents) this.audioLog.push(e.kind); if (this.audioLog.length > 4000) this.audioLog.splice(0, 2000); }
     this.audio.update(w, dt, gm, p.pos.x, p.pos.y);
     w.screenShake = Math.max(0, w.screenShake - dt * 2.2);
-    // rebuild body meshes changed by the director (new bases)
+    // rebuild body meshes changed by the director (new bases) or newly arrived hulls
     for (const b of w.bodies) {
       const bb = b as Body & { meshDirty?: boolean };
-      if (bb.meshDirty) {
+      if (bb.meshDirty || (b.kind !== 'star' && !this.planetMeshes.has(b.id))) {
         bb.meshDirty = false;
         const old = this.planetMeshes.get(b.id);
         if (old) this.meshes.remove(old);
@@ -346,53 +331,6 @@ export class Game {
     // victory: the core is dark; give the moment ten seconds, then the debrief
     if (w.coreDestroyed && this.victoryAt < 0) { this.victoryAt = w.time; }
     if (this.victoryAt >= 0 && !this.victoryShown && w.time - this.victoryAt > 10 && p.alive) { this.victoryShown = true; this.mode = 'gameover'; }
-    w.time += dt;
-    w.tick++;
-  }
-
-  /** Refuel, repair, load ore and strip derelicts while landed on a pad. */
-  private landedServices(dt: number): void {
-    const w = this.world;
-    const p = w.player;
-    if (!p.landed || !p.alive) return;
-    const pad = p.landed.pad;
-    if (!pad || !pad.alive) return;
-    if (pad.kind === 'colony' || pad.kind === 'mine' || pad.kind === 'outpost') {
-      if (p.fuel < p.fuelMax) p.fuel = Math.min(p.fuelMax, p.fuel + 7 * dt);
-      if (pad.kind === 'colony' && p.hull < p.hullMax) p.hull = Math.min(p.hullMax, p.hull + 4 * dt);
-      if (!pad.visited) { pad.visited = true; w.score += 100; comm(w, pad.name, pad.kind === 'colony' ? 'WELCOME, KESTREL. FUEL AND REPAIRS ARE ON US.' : 'PAD CLEAR. ORE IS YOURS TO CARRY.', [0.6, 1, 0.7], 1); }
-      // deliver a towed pod
-      if (p.towing) {
-        const pod = p.towing;
-        pod.alive = false; p.towing = null;
-        w.rescued++; w.score += 400; w.credits += 150;
-        if (pod.home === pad) pad.population++;
-        comm(w, pad.name, 'POD RECEIVED. THE COLONISTS ARE SAFE. +150 CR', [0.6, 1, 0.7], 2);
-        sfx(w, 'success');
-      }
-      if (pad.kind === 'mine') {
-        pad.spawnTimer -= dt;
-        if (pad.spawnTimer <= 0 && pad.stock > 0 && p.cargo.ore + p.cargo.salvage < p.cargo.capacity) {
-          pad.spawnTimer = 1.5;
-          pad.stock--; p.cargo.ore++;
-          sfx(w, 'pickup', null, 0.5);
-        }
-      }
-    } else if (pad.kind === 'derelict') {
-      if (pad.stock > 0) {
-        pad.spawnTimer += dt;
-        if (pad.spawnTimer > 7) {
-          pad.stock = 0;
-          const modules = ['ancientcore', 'coldfusion', 'gyros', 'phase', 'seekers'];
-          const names: Record<string, string> = { ancientcore: 'ANCIENT DRIVE CORE (BOOST +40%, BURN -40%)', coldfusion: 'COLD FUSION CELL (FUEL BURN HALVED)', gyros: 'MILITARY GYROS (TURN RATE +40%)', phase: 'PHASE LATTICE (SHIELD + HULL)', seekers: 'SEEKER RACK (12 MISSILES)' };
-          const id = modules[pad.id % modules.length];
-          applyModule(w, p, id);
-          w.score += 800; w.credits += 200;
-          comm(w, pad.name, `SALVAGE COMPLETE: ${names[id]}. +200 CR`, [1, 0.9, 0.5], 2);
-          w.audioEvents.push({ kind: 'module', pos: null, volume: 1, param: 0 });
-        }
-      }
-    }
   }
 
   private checkDeath(dt: number): void {
@@ -475,7 +413,7 @@ export class Game {
         const dx = p.pos.x - b.pos.x, dy = p.pos.y - b.pos.y;
         const d = Math.hypot(dx, dy);
         if (d < maxTerrainRadius(b) + 130) {
-          const a = d - terrainRadiusAt(b, Math.atan2(dy, dx));
+          const a = Math.max(2, d - terrainRadiusAt(b, Math.atan2(dy, dx)));
           if (a < alt) { alt = a; groundDir = { x: -dx / (d || 1), y: -dy / (d || 1) }; }
         }
       }
@@ -635,38 +573,68 @@ export class Game {
       const alpha = isFault ? 0.6 : 0.28;
       L.circleWorld(b.pos.x, 0.05, -b.pos.y, b.radius, Math.min(96, b.segments), isFault ? 0.8 : pal[0], isFault ? 0.4 : pal[1], isFault ? 1 : pal[2], alpha, 1.2);
       if (isFault) {
-        // pulsing rings to warn about the well
+        // rings that keep the tide's time
+        const g = tideGlow(w);
         for (let k = 1; k <= 3; k++) {
-          const r = b.radius * (1 + k * 1.5) + Math.sin(w.time * 2 - k) * 3;
-          L.circleWorld(b.pos.x, 0.05, -b.pos.y, r, 48, 0.8, 0.4, 1, 0.25 / k, 1);
+          const r = b.radius * (1 + k * 1.5) + g * 4 - k;
+          L.circleWorld(b.pos.x, 0.05, -b.pos.y, r, 48, 0.8, 0.4, 1, (0.08 + 0.32 * g) / k, 1);
+        }
+        const ff = w.slices.faultFlash;
+        if (ff > 0) L.circleWorld(b.pos.x, 0.05, -b.pos.y, b.radius * 2.2, 48, 1, 0.8, 1, ff * 0.9, 2.5);
+      }
+      // fissures: their edges sit on the dome and flash when a ping finds them
+      for (const f of b.fissures) {
+        const n = f.outline.length;
+        const flash = clamp((f.flashUntil - w.time) / 2.6, 0, 1);
+        for (let i = 0; i < n; i++) {
+          if (i === f.openEdge) continue;
+          const a = f.outline[i], c = f.outline[(i + 1) % n];
+          const wa = bodyToWorld(b, a), wc = bodyToWorld(b, c);
+          const ha = b.oblate * Math.sqrt(Math.max(0, b.radius * b.radius - (a.x * a.x + a.y * a.y))) + 0.5;
+          const hc = b.oblate * Math.sqrt(Math.max(0, b.radius * b.radius - (c.x * c.x + c.y * c.y))) + 0.5;
+          let sweep = 0;
+          for (const pg of w.pings) {
+            const mx = (wa.x + wc.x) / 2, my = (wa.y + wc.y) / 2;
+            const dd = Math.hypot(mx - pg.x, my - pg.y);
+            if (dd < pg.r && dd > pg.r - 14) sweep = 1;
+          }
+          const bright = Math.max(flash, sweep);
+          L.seg(wa.x, ha, -wa.y, wc.x, hc, -wc.y, lerp(pal[0], 0.7, bright), lerp(pal[1], 1.0, bright), lerp(pal[2], 1.0, bright), 0.3 + 0.65 * bright, 1.2 + bright);
         }
       }
       // name label when zoomed out
       if (upp > 0.45 && b.kind !== 'moon') drawTextWorld(L, b.name, b.pos.x, 0.3, -(b.pos.y - b.radius - upp * 14), upp * 10, pal[0], pal[1], pal[2], 0.55, 'center', 1.2);
+      const rotOff = b.rotates ? b.spinAngle : 0;
       for (const pad of b.pads) {
         const col = padColor(pad.kind, pad.alive);
         const seg = b.segments;
-        const a0 = (pad.segIndex / seg) * TAU, a1 = ((pad.segIndex + 1) / seg) * TAU;
+        const a0 = (pad.segIndex / seg) * TAU + rotOff, a1 = ((pad.segIndex + 1) / seg) * TAU + rotOff;
         const r0 = b.terrain[pad.segIndex], r1 = b.terrain[(pad.segIndex + 1) % seg];
         const x0 = b.pos.x + Math.cos(a0) * r0, y0 = b.pos.y + Math.sin(a0) * r0;
         const x1 = b.pos.x + Math.cos(a1) * r1, y1 = b.pos.y + Math.sin(a1) * r1;
         const blink = 0.55 + 0.45 * Math.sin(w.time * 3 + pad.id);
         L.seg(x0, 0.3, -y0, x1, 0.3, -y1, col[0], col[1], col[2], 0.9, 2.2);
-        const n = terrainNormalAt(b, pad.angle);
+        const pwa = padWorldAngle(pad);
+        const n = terrainNormalAt(b, pwa);
         for (const [x, y] of [[x0, y0], [x1, y1]]) {
           L.seg(x, 0.3, -y, x + n.x * 1.6, 0.3, -(y + n.y * 1.6), col[0], col[1], col[2], blink, 1.5);
         }
         if (pad.kind === 'enemybase' || pad.kind === 'core') {
-          // base structure: a hostile glyph and health ring
-          const cx = b.pos.x + Math.cos(pad.angle) * (pad.height + 2), cy = b.pos.y + Math.sin(pad.angle) * (pad.height + 2);
+          // base structure: a hostile glyph, keeping the tide's time while it has power
+          const cp = padWorldPos(pad, 2);
+          const cx = cp.x, cy = cp.y;
+          const powered = !(w.slices.cutBody === b && !w.slices.cutPowered);
+          const glow = powered ? tideGlow(w) : 0.1;
           if (pad.alive) {
-            L.circleWorld(cx, 0.3, -cy, pad.kind === 'core' ? 5 : 3.2, 8, col[0], col[1], col[2], 0.5 + 0.3 * Math.sin(w.time * 6), 1.5);
-            if (pad.kind === 'core') L.circleWorld(cx, 0.3, -cy, 8 + Math.sin(w.time * 3) * 1.5, 12, 1, 0.3, 0.6, 0.35, 1.2);
+            L.circleWorld(cx, 0.3, -cy, pad.kind === 'core' ? 5 : 3.2, 8, col[0], col[1], col[2], 0.25 + 0.55 * glow, 1.5);
+            if (pad.kind === 'core') L.circleWorld(cx, 0.3, -cy, 8 + glow * 3, 12, 1, 0.3, 0.6, 0.1 + 0.35 * glow, 1.2);
           }
         }
         if (upp < 0.35) {
-          const lx = b.pos.x + Math.cos(pad.angle) * (pad.height + 9), ly = b.pos.y + Math.sin(pad.angle) * (pad.height + 9);
-          const label = pad.kind === 'colony' ? `${pad.name} ${pad.population}` : pad.kind === 'mine' ? `${pad.name} ORE ${pad.stock}` : pad.kind === 'enemybase' || pad.kind === 'core' ? `${pad.name} ${pad.alive ? Math.ceil(pad.enemyHealth) : 'DESTROYED'}` : pad.name;
+          const lp = padWorldPos(pad, 9);
+          const lx = lp.x, ly = lp.y;
+          const thr = pad.kind === 'thruster' ? b.thrusters.find(t => t.pad === pad) : null;
+          const label = pad.kind === 'colony' ? `${pad.name} ${pad.population}` : pad.kind === 'mine' ? `${pad.name} ORE ${pad.stock}` : pad.kind === 'enemybase' || pad.kind === 'core' ? `${pad.name} ${pad.alive ? Math.ceil(pad.enemyHealth) : 'DESTROYED'}` : thr ? `${pad.name} ${thr.fuel.toFixed(0)}/${thr.capacity}` : pad.name;
           drawTextWorld(L, label, lx, 0.3, -ly, upp * 11, col[0], col[1], col[2], 0.8, 'center', 1.2);
         }
       }
@@ -680,6 +648,30 @@ export class Game {
       const col = s.faction === 'enemy' ? [1.0, 0.4, 0.3] : [0.8, 0.9, 1.0];
       const ex = s.pos.x - cx * s.radius * 0.9, ey = s.pos.y - cy * s.radius * 0.9;
       L.seg(ex, 0, -ey, ex - cx * len, 0, -(ey - cy * len), col[0], col[1], col[2], 0.8, 2);
+    }
+
+    // free hulls: predicted path when close, thruster plumes, hot glow
+    for (const b of w.bodies) {
+      if (!b.free) continue;
+      const d = Math.hypot(b.pos.x - p.pos.x, b.pos.y - p.pos.y);
+      if (d < 420) {
+        predictTrajectory(w, b.pos.x, b.pos.y, b.vel.x, b.vel.y, 1, 300, 1, this.trajectory, b);
+        const T = this.trajectory;
+        for (let i = 0; i + 1 < T.count; i += 2) {
+          const f = 1 - i / T.count;
+          L.seg(T.pts[i * 2], 0.2, -T.pts[i * 2 + 1], T.pts[i * 2 + 2], 0.2, -T.pts[i * 2 + 3], 0.8, 0.85, 1.0, 0.08 + 0.3 * f, 1.3);
+        }
+      }
+      for (const t of b.thrusters) {
+        if (t.fuel <= 0) continue;
+        const pp = padWorldPos(t.pad, 1);
+        const c = Math.cos(b.spinAngle), sn = Math.sin(b.spinAngle);
+        const fx = t.dirLocal.x * c - t.dirLocal.y * sn, fy = t.dirLocal.x * sn + t.dirLocal.y * c;
+        const len = 9 * (0.8 + Math.random() * 0.4);
+        L.seg(pp.x, 0.3, -pp.y, pp.x - fx * len, 0.3, -(pp.y - fy * len), 0.6, 0.85, 1.0, 0.9, 3);
+        this.particles.spawn(pp.x, 0.3, -pp.y, -fx * 30 + (Math.random() - 0.5) * 6, 0, fy * 30 + (Math.random() - 0.5) * 6, 0.4, 0.6, 0.8, 1.0, 0.6, 2);
+      }
+      if (b.integrity < 100) L.circleWorld(b.pos.x, 0.2, -b.pos.y, b.maxRadius + 4, 48, 1, 0.4, 0.2, (1 - b.integrity / 100) * 0.6, 2);
     }
 
     // player: marker, thrust, trajectory, gravity
@@ -797,6 +789,66 @@ export class Game {
       else if (pk.kind === 'pod') L.circleWorld(pk.pos.x, 0.2, -pk.pos.y, 1.6, 10, 0.5, 1, 0.6, 0.5 + 0.3 * Math.sin(w.time * 6), 1.2);
       else if (pk.kind === 'wreck') L.circleWorld(pk.pos.x, 0.2, -pk.pos.y, 4, 12, 0.6, 0.85, 0.6, 0.3, 1);
     }
+    // the cable
+    if (p.tether && p.alive) {
+      const e = tetherEnd(p.tether);
+      if (e) {
+        const t = p.tether;
+        const strain = t.tension / TETHER_BREAK;
+        let col = [0.5, 0.75, 0.8], a = 0.45, wdt = 1.2;
+        if (t.tension > 0) { col = strain < 0.35 ? [0.55, 0.95, 1.0] : strain < 0.7 ? [1.0, 0.75, 0.3] : [1.0, 0.3, 0.3]; a = 0.6 + 0.4 * Math.min(1, strain * 1.5); wdt = 1.5 + strain * 1.5; }
+        if (strain > 0.7) a *= 0.6 + 0.4 * Math.sin(w.time * 40);
+        L.seg(p.pos.x, 0.25, -p.pos.y, e.x, 0.25, -e.y, col[0], col[1], col[2], a, wdt);
+        L.circleWorld(e.x, 0.25, -e.y, 0.6, 8, col[0], col[1], col[2], a, 1.2);
+      }
+    }
+    // pings: the ring and what it lights on its way out
+    for (const pg of w.pings) {
+      const k = 1 - pg.r / pg.maxR;
+      const col = pg.echo ? [0.85, 0.5, 1.0] : [0.5, 1.0, 0.9];
+      if (pg.r > 0) L.circleWorld(pg.x, 0.15, -pg.y, pg.r, 72, col[0], col[1], col[2], 0.55 * k, pg.echo ? 2.2 : 1.6);
+      if (pg.echo) continue;
+      for (const b of w.bodies) {
+        const d = Math.hypot(b.pos.x - pg.x, b.pos.y - pg.y);
+        if (d - b.maxRadius > pg.r || d + b.maxRadius < pg.r - 14) continue;
+        const seg = b.segments;
+        const rot = b.rotates ? b.spinAngle : 0;
+        for (let i = 0; i < seg; i++) {
+          const a0 = (i / seg) * TAU + rot, a1 = ((i + 1) / seg) * TAU + rot;
+          const x0 = b.pos.x + Math.cos(a0) * b.terrain[i], y0 = b.pos.y + Math.sin(a0) * b.terrain[i];
+          const x1 = b.pos.x + Math.cos(a1) * b.terrain[(i + 1) % seg], y1 = b.pos.y + Math.sin(a1) * b.terrain[(i + 1) % seg];
+          const dm = Math.hypot((x0 + x1) / 2 - pg.x, (y0 + y1) / 2 - pg.y);
+          if (dm <= pg.r && dm > pg.r - 14) L.seg(x0, 0.35, -y0, x1, 0.35, -y1, 0.7, 1, 0.95, 0.9 * k + 0.1, 2);
+        }
+      }
+    }
+    // things a ping lit up
+    const flashDiamond = (x: number, y: number, size: number, col: number[], a: number) => {
+      L.seg(x, 0.3, -(y + size), x + size, 0.3, -y, col[0], col[1], col[2], a, 1.4);
+      L.seg(x + size, 0.3, -y, x, 0.3, -(y - size), col[0], col[1], col[2], a, 1.4);
+      L.seg(x, 0.3, -(y - size), x - size, 0.3, -y, col[0], col[1], col[2], a, 1.4);
+      L.seg(x - size, 0.3, -y, x, 0.3, -(y + size), col[0], col[1], col[2], a, 1.4);
+    };
+    for (const pk of w.pickups) {
+      if (!pk.alive) continue;
+      if (pk.flashUntil > w.time) flashDiamond(pk.pos.x, pk.pos.y, Math.max(1.2, upp * 6), pk.kind === 'prop' || pk.kind === 'log' ? [1, 0.7, 1] : [0.7, 1, 0.95], clamp((pk.flashUntil - w.time) / 1.4, 0, 1) * 0.9);
+      if (pk.glow > 0) {
+        const g = pk.kind === 'log' ? (0.3 + 0.7 * Math.max(0, w.hudFlicker) * 3) : tideGlow(w);
+        L.circleWorld(pk.pos.x, 0.25, -pk.pos.y, pk.radius + 1.2 + g * 0.8, 12, 1, 0.45, 0.9, clamp(pk.glow * (0.15 + 0.6 * g), 0, 1), 1.5);
+      }
+    }
+    for (const a of w.asteroids) if (a.alive && a.flashUntil > w.time) L.circleWorld(a.pos.x, 0.3, -a.pos.y, a.radius + 0.6, 10, 0.7, 1, 0.95, clamp((a.flashUntil - w.time) / 1.0, 0, 1) * 0.7, 1.2);
+    for (const s of w.ships) {
+      if (!s.alive || s === p || s.docked) continue;
+      if (s.flashUntil > w.time) flashDiamond(s.pos.x, s.pos.y, s.radius + 1, s.faction === 'enemy' ? [1, 0.5, 0.5] : [0.7, 1, 0.95], clamp((s.flashUntil - w.time) / 1.4, 0, 1) * 0.9);
+      // sentinels keep the tide's time while they have power
+      if (s.kind === 'sentinel') {
+        const powered = !(s.landed && s.landed.body === w.slices.cutBody && !w.slices.cutPowered);
+        const g = powered ? tideGlow(w) : 0;
+        if (g > 0.02) L.circleWorld(s.pos.x, 0.3, -s.pos.y, 2.6 + g * 0.6, 8, 1, 0.45, 0.9, 0.1 + 0.5 * g, 1.4);
+      }
+    }
+    for (const st of w.stations) if (st.alive && st.flashUntil > w.time) L.circleWorld(st.pos.x, 0.3, -st.pos.y, st.radius + 2, 24, 0.7, 1, 0.95, clamp((st.flashUntil - w.time) / 1.2, 0, 1) * 0.6, 1.4);
     // stranded shuttle marker
     for (const s of w.ships) {
       if (!s.alive || s.faction !== 'civ') continue;

@@ -35,6 +35,9 @@ Open the URL Vite prints (usually http://localhost:5173), press ENTER.
 | Tab | cycle course between situations and stations |
 | H | flight manual |
 | 0 | mute |
+| T | cable: latch the nearest thing within reach, or let go |
+| R | ping: a sensor pulse; watch what comes back |
+| F (hold) | transfer fuel into what you are landed on or touching |
 | Esc | pause (in the dock: nothing; L launches) |
 
 Gamepad: left stick turns, right trigger thrusts, A fires, B boosts, bumpers strafe, Start pauses,
@@ -51,6 +54,12 @@ Back opens the map.
 - Docking: enter the rotating ring through the gap, touch the hub under 7.
 - The system lives whether or not you look: raids, convoys, sieges, stranded ships, rogue
   asteroids, solar flares, enemy construction. You cannot save everyone.
+- The cable is a real physical rope: a taut cable is a pendulum, a load changes your handling, a yank
+  over about seven units per second parts it, a steady pull never does, and pulling on a rotating
+  ring or hull applies torque. Ping returns geometry and echoes, never labels.
+- Three hand-built situations exist in every system. They are not marked. Look for a crack in the
+  enemy world, a large silent hull that arrives on a bad course, and a signal you can hear before
+  you can see it.
 - The run ends when your three hulls are gone, or when you destroy the Starfall core on the
   enemy world (red on the map). Spare hulls come with score. After a win you can keep flying.
 
@@ -60,5 +69,5 @@ Back opens the map.
 - `npm run playtest -- <scenario>` drives the built game in headless Chromium (needs
   `npx playwright install chromium` and a running `npm run preview`). Scenarios: idle, fly, fall,
   land, smoke, dock, combat, raid, approach, tour, keys, launches, assault, gallery, endings,
-  upgrades, audio, perf. Screenshots land in `playtest/out/`.
+  upgrades, audio, perf, tetherphys, cut, pilgrim, signal, fault. Screenshots land in `playtest/out/`.
 - `DESIGN.md` records the design decisions; `starfall.md` is the original brief.

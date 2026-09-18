@@ -2,6 +2,8 @@
 import { TAU, wrapAngle } from '../engine/math';
 import type { Body } from './bodies';
 import { damageShip } from './physics';
+import { release } from './tether';
+import { podDelivered } from './slices';
 import { comm, sfx, type Ship, type Station, type World } from './world';
 
 export const RING_SEGMENTS = 24;
@@ -28,6 +30,7 @@ export function createStation(w: World, spec: StationSpec): Station {
     vel: { x: 0, y: 0 },
     angle: w.rng.next() * TAU,
     spin: spec.spin ?? 0.2,
+    spinNominal: spec.spin ?? 0.2,
     radius: R,
     bayDepth: R * 0.32,           // hub radius
     bayHalfWidth: segAngle * 2.0, // gap half-angle: four ring segments removed
@@ -46,6 +49,7 @@ export function createStation(w: World, spec: StationSpec): Station {
     meshIndex: -1,
     lastDockTime: -1e9,
     stock: 0,
+    flashUntil: -1e9,
   };
   updateStationPos(st, w.time, 0);
   w.stations.push(st);
@@ -68,6 +72,8 @@ export function updateStations(w: World, dt: number): void {
   for (const st of w.stations) {
     updateStationPos(st, w.time, dt);
     st.angle = wrapAngle(st.angle + st.spin * dt);
+    // the ring motors are weak: a cable can out-pull them, but they win in the end
+    if (st.spin !== st.spinNominal) { const d = st.spinNominal - st.spin; const step = 0.0035 * dt; st.spin = Math.abs(d) <= step ? st.spinNominal : st.spin + Math.sign(d) * step; }
     if (st.siege > 0) st.siege -= dt;
     if (st.health < st.healthMax && st.siege <= 0) st.health = Math.min(st.healthMax, st.health + 2 * dt);
     // point defence: a slow turret that harasses the nearest hostile
@@ -188,15 +194,12 @@ export function dock(w: World, s: Ship, st: Station): void {
     w.respawnStation = st;
     sfx(w, 'dock', st.pos, 1);
     comm(w, st.name, `DOCKING COMPLETE. WELCOME ABOARD, KESTREL.`, [0.6, 1, 0.8], 1);
-    if (s.towing) {
+    if (s.towing && s.towing.alive) {
       const pod = s.towing;
-      pod.alive = false;
-      s.towing = null;
-      w.rescued++;
-      w.score += 400;
-      w.credits += 150;
+      release(w, s);
+      podDelivered(w, pod, null);
       comm(w, st.name, 'POD RECEIVED. THE COLONISTS ARE SAFE. +150 CR', [0.6, 1, 0.8], 1);
-    }
+    } else if (s.tether) release(w, s);
   }
 }
 

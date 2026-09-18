@@ -3,6 +3,7 @@
 import { MeshBuilder, type MeshData } from '../engine/mesh';
 import { fbm3, lerp, Rng, TAU, valueNoise3 } from '../engine/math';
 import { surfaceRadius, type Body } from '../sim/bodies';
+import { pointInPolygon } from '../sim/walls';
 import type { ShipKind, Station } from '../sim/world';
 
 type V3 = number[];
@@ -120,7 +121,8 @@ export function buildPlanetMesh(b: Body): MeshData {
     for (let i = 0; i < N; i++) {
       const lon = (i / N) * TAU;
       let r: number;
-      if (b.kind === 'gas' || b.roughness <= 0) r = R;
+      if (b.kind === 'hull') r = b.terrain[i];
+      else if (b.kind === 'gas' || b.roughness <= 0) r = R;
       else if (j === M / 2) r = b.terrain[i];
       else {
         const s = surfaceRadius(b, lon, lat);
@@ -144,6 +146,10 @@ export function buildPlanetMesh(b: Body): MeshData {
       const q = v < 0.3 ? pal.low : v < 0.66 ? pal.mid : pal.high;
       return q;
     }
+    if (b.kind === 'hull') {
+      const band = Math.floor(((lon / TAU) * 24 + j * 0.5)) % 3;
+      return band === 0 ? pal.low : band === 1 ? pal.mid : pal.high;
+    }
     // ice caps for icy/rocky worlds at high latitude
     if ((b.type === 'ice') && Math.abs(lat) > 1.15) return pal.high;
     const n = valueNoise3(i * 0.9, j * 0.9, b.seed * 0.01, b.seed) * 0.02;
@@ -165,6 +171,24 @@ export function buildPlanetMesh(b: Body): MeshData {
       let col = colorFor(hRel, lat, lon, i, j);
       const nearEq = j === M / 2 - 1 || j === M / 2;
       if (nearEq && padSeg.has(i)) col = padCol;
+      if (b.fissures.length) {
+        // the quad's footprint on the plane, in the body's local frame
+        const rq = ((rad[j][i] + rad[j][i1] + rad[j + 1][i1] + rad[j + 1][i]) / 4) * Math.cos(lat);
+        const lx = rq * Math.cos(lon), ly = rq * Math.sin(lon);
+        let cut = false;
+        for (const f of b.fissures) if (pointInPolygon(f.outline, lx, ly)) { cut = true; break; }
+        if (!cut) {
+          // also cut quads whose corners fall inside, so the opening is not ragged
+          for (const [ci, cj] of [[i, j], [i1, j], [i1, j + 1], [i, j + 1]]) {
+            const cl = -Math.PI / 2 + Math.PI * cj / M;
+            const cr = rad[cj][ci] * Math.cos(cl);
+            const cln = (ci / N) * TAU;
+            for (const f of b.fissures) if (pointInPolygon(f.outline, cr * Math.cos(cln), cr * Math.sin(cln))) { cut = true; break; }
+            if (cut) break;
+          }
+        }
+        if (cut) continue;
+      }
       if (j === 0) triOut(mb, p00, p10, p11, col);
       else if (j === M - 1) triOut(mb, p00, p10, p01, col);
       else {
@@ -173,6 +197,60 @@ export function buildPlanetMesh(b: Body): MeshData {
         else { triOut(mb, p00, p10, p01, col); triOut(mb, p10, p11, p01, col); }
       }
     }
+  }
+  // bedrock: a dark disc under any body with fissures so the sky never shows through a cut
+  if (b.fissures.length) {
+    const fy = Math.min(...b.fissures.map(f => f.floorY)) - 0.6;
+    const rc = pal.low.map(c => c * 0.3);
+    const rr = b.maxRadius * 1.02, segsB = 64;
+    for (let i = 0; i < segsB; i++) {
+      const a0 = (i / segsB) * TAU, a1 = ((i + 1) / segsB) * TAU;
+      mb.triN(0, fy, 0, Math.cos(a0) * rr, fy, -Math.sin(a0) * rr, Math.cos(a1) * rr, fy, -Math.sin(a1) * rr, 0, 1, 0, rc[0], rc[1], rc[2]);
+      mb.triN(0, fy, 0, Math.cos(a1) * rr, fy, -Math.sin(a1) * rr, Math.cos(a0) * rr, fy, -Math.sin(a0) * rr, 0, 1, 0, rc[0], rc[1], rc[2]);
+    }
+  }
+  // fissures: extruded walls from the floor up to the dome, and a dark floor
+  for (const f of b.fissures) {
+    const n = f.outline.length;
+    const wallCol = [pal.low[0] * 0.8, pal.low[1] * 0.8, pal.low[2] * 0.8];
+    const floorCol = [pal.low[0] * 0.35, pal.low[1] * 0.35, pal.low[2] * 0.35];
+    const top = (p: { x: number; y: number }): number => b.oblate * Math.sqrt(Math.max(0, R * R - (p.x * p.x + p.y * p.y))) * 1.03 + 0.6;
+    for (let i = 0; i < n; i++) {
+      if (i === f.openEdge) continue;
+      const a = f.outline[i], c = f.outline[(i + 1) % n];
+      const ha = top(a), hc = top(c);
+      // inward (open side) normal: left of the edge for a counter-clockwise outline, in world-local (x, y, -y) terms
+      const ex = c.x - a.x, ey = c.y - a.y;
+      const el = Math.hypot(ex, ey) || 1;
+      const nx = -ey / el, ny = ex / el;
+      const shade = 0.85 + 0.3 * Math.abs(nx);
+      const col = [wallCol[0] * shade, wallCol[1] * shade, wallCol[2] * shade];
+      // two-sided quad so culling never hides a wall from the camera's side
+      const A: V3 = [a.x, f.floorY, -a.y], B: V3 = [c.x, f.floorY, -c.y], C: V3 = [c.x, hc, -c.y], D: V3 = [a.x, ha, -a.y];
+      mb.triN(A[0], A[1], A[2], B[0], B[1], B[2], C[0], C[1], C[2], nx, 0, -ny, col[0], col[1], col[2]);
+      mb.triN(A[0], A[1], A[2], C[0], C[1], C[2], D[0], D[1], D[2], nx, 0, -ny, col[0], col[1], col[2]);
+      mb.triN(A[0], A[1], A[2], C[0], C[1], C[2], B[0], B[1], B[2], nx, 0, -ny, col[0], col[1], col[2]);
+      mb.triN(A[0], A[1], A[2], D[0], D[1], D[2], C[0], C[1], C[2], nx, 0, -ny, col[0], col[1], col[2]);
+    }
+    // floor: fan from the centroid (dark, mostly hidden under the dome where it overshoots)
+    let cx = 0, cy = 0;
+    for (const p of f.outline) { cx += p.x; cy += p.y; }
+    cx /= n; cy /= n;
+    for (let i = 0; i < n; i++) {
+      const a = f.outline[i], c = f.outline[(i + 1) % n];
+      mb.triN(cx, f.floorY, -cy, a.x, f.floorY, -a.y, c.x, f.floorY, -c.y, 0, 1, 0, floorCol[0], floorCol[1], floorCol[2]);
+      mb.triN(cx, f.floorY, -cy, c.x, f.floorY, -c.y, a.x, f.floorY, -a.y, 0, 1, 0, floorCol[0], floorCol[1], floorCol[2]);
+    }
+  }
+  // hull greebles: a spine of blocks along the long axis
+  if (b.kind === 'hull') {
+    for (let i = -4; i <= 4; i++) {
+      const x = i * 11;
+      const hgt = 2.2 + (i % 2 === 0 ? 1.4 : 0);
+      box(mb, [x, b.oblate * 8 + hgt / 2, 0], [7, hgt, 5 - Math.abs(i) * 0.3], i % 3 === 0 ? pal.high : pal.mid, pal.low);
+    }
+    prism(mb, [46, b.oblate * 8 + 3, 0], 6, 3.5, 6, pal.high, pal.mid);
+    box(mb, [-56, b.oblate * 6 + 2, 0], [8, 4, 12], pal.low, pal.mid);
   }
   // ring system for gas giants: a flat faceted annulus in the ecliptic
   if (b.kind === 'gas') {
@@ -391,6 +469,8 @@ export function buildPickupMesh(kind: string): MeshData {
     case 'fuel': prism(mb, [0, 0, 0], 8, 0.5, 0.9, [0.3, 0.8, 0.9]); break;
     case 'module': { const { verts, faces } = icosphere(1); hull(mb, verts.map(v => v.map(x => x * 0.7)), faces, [1.0, 0.85, 0.4]); break; }
     case 'wreck': box(mb, [0, 0, 0], [3.5, 0.7, 1.2], [0.35, 0.36, 0.4]); box(mb, [1.2, 0.3, 0.8], [1.0, 0.8, 0.8], [0.3, 0.3, 0.32]); break;
+    case 'prop': prism(mb, [0, 0, 0], 8, 0.9, 1.4, [0.55, 0.2, 0.6], [1.0, 0.5, 0.9]); prism(mb, [0, 0.9, 0], 4, 0.4, 0.5, [1.0, 0.5, 0.9]); break;
+    case 'log': box(mb, [0, 0, 0], [0.7, 0.5, 0.5], [0.9, 0.55, 0.15], [1.0, 0.9, 0.5]); break;
   }
   return mb.build();
 }

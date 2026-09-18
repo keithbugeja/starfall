@@ -322,7 +322,7 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
       const e = newEvent(w, 'stranded', { x, y }, `MAYDAY: SHUTTLE FALLING INTO ${b.name}`, 140, 220);
       e.target = sh;
       e.ships.push(sh);
-      comm(w, 'SHUTTLE ' + sh.id, `MAYDAY. OUT OF FUEL, FALLING TOWARD ${b.name}. NEED 15 UNITS. APPROACH UNDER 6.`, [1, 0.8, 0.4], 3, { x, y });
+      comm(w, 'SHUTTLE ' + sh.id, `MAYDAY. OUT OF FUEL, FALLING TOWARD ${b.name}. NEED 15 UNITS. COME ALONGSIDE UNDER 6 AND HOLD F.`, [1, 0.8, 0.4], 3, { x, y });
       break;
     }
     case 'construction': {
@@ -493,7 +493,7 @@ function updateEvents(w: World, dt: number): void {
         if (pl.alive && !pl.docked) {
           const d = dist(pl.pos, sh.pos);
           const rel = Math.hypot(pl.vel.x - sh.vel.x, pl.vel.y - sh.vel.y);
-          if (d < pl.radius + sh.radius + 1.2 && rel < 6) {
+          if (d < pl.radius + sh.radius + 1.6 && rel < 6 && pl.transferHeld) {
             if (pl.fuel >= 15) { pl.fuel -= 15; sh.fuel = 40; sfx(w, 'pickup', sh.pos, 1, 2); }
             else if (w.tick % 120 === 0) comm(w, 'SHUTTLE ' + sh.id, 'YOU DO NOT HAVE 15 UNITS TO SPARE.', [1, 0.7, 0.3], 1);
           }

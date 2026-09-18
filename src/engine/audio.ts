@@ -179,6 +179,15 @@ export class AudioSystem {
       case 'deny': this.tone('square', 220, 180, 0.15, 0.07); break;
       case 'death': this.noise(1.8, 0.7, 'lowpass', 2000, 50, 0.7); this.tone('sawtooth', 200, 25, 1.6, 0.2); break;
       case 'warp': this.tone('sine', 200, 1600, 0.6, 0.1); break;
+      case 'ping': this.tone('sine', 1400, 700, 0.35, 0.09); this.tone('sine', 2100, 1050, 0.25, 0.04, 0, 0.02); break;
+      case 'echo': this.tone('sine', 500, 380, 0.5, 0.07 * vol, pan, 0.05); this.tone('triangle', 250, 190, 0.6, 0.05 * vol, pan, 0.1); break;
+      case 'return': this.tone('square', e.param === 2 ? 1900 : 1500, e.param === 2 ? 1900 : 1500, 0.03, 0.035 * vol, pan); break;
+      case 'blip': this.tone('sine', 900 + e.param * 500, 900 + e.param * 500, 0.06, 0.06 * (0.3 + e.param), 0); break;
+      case 'tether': if (e.param === 0) { this.noise(0.08, 0.3, 'lowpass', 1400, 300, 1, pan); this.tone('square', 240, 180, 0.07, 0.07, pan); } else { this.tone('square', 180, 240, 0.06, 0.05, pan); } break;
+      case 'snap': this.tone('sawtooth', 1200, 80, 0.25, 0.14, pan); this.noise(0.15, 0.3, 'highpass', 2000, 4000, 1, pan); break;
+      case 'powerdown': this.tone('sawtooth', 220, 30, 1.6, 0.12, pan); this.tone('sine', 110, 20, 1.8, 0.1, pan); break;
+      case 'transfer': this.noise(0.25, 0.08, 'bandpass', 900, 1400, 2, pan); break;
+      case 'faultanswer': for (let i = 0; i < 4; i++) this.tone('triangle', 55 * Math.pow(1.5, i), 55 * Math.pow(1.5, i), 2.2, 0.08, 0, i * 0.12, 0.3); this.noise(2.0, 0.2, 'lowpass', 300, 1200, 0.7); break;
       default: break;
     }
   }

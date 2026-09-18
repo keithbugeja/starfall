@@ -2,7 +2,9 @@
 // trajectory prediction. Everything lives in the sim plane.
 import { angleDiff, clamp, damp, TAU, v2len, wrapAngle, type V2 } from '../engine/math';
 import type { Controls } from '../engine/input';
-import { gravityFrom, maxTerrainRadius, terrainNormalAt, terrainRadiusAt, terrainSegmentAt, type Body, type Pad } from './bodies';
+import { gravityFrom, maxTerrainRadius, surfaceVelocity, terrainNormalAt, terrainRadiusAt, terrainSegmentAt, type Body, type Pad } from './bodies';
+import { bodyToWorld, circleVsFissure, fissureAt, rotateVec, segmentVsFissure, worldToBody, type Fissure } from './walls';
+import { attachPickup, release } from './tether';
 import { comm, sfx, type Asteroid, type Pickup, type Projectile, type Ship, type World } from './world';
 
 const tmpG: V2 = { x: 0, y: 0 };
@@ -42,16 +44,18 @@ export function stepShip(w: World, s: Ship, c: Controls, dt: number): void {
 
   if (s.landed) {
     const L = s.landed;
-    s.pos.x = L.body.pos.x + L.offset.x;
-    s.pos.y = L.body.pos.y + L.offset.y;
-    s.vel.x = L.body.vel.x; s.vel.y = L.body.vel.y;
-    s.angle = L.angle;
+    const b = L.body;
+    const wp = bodyToWorld(b, L.offset);
+    s.pos.x = wp.x; s.pos.y = wp.y;
+    const sv = surfaceVelocity(b, wp.x, wp.y);
+    s.vel.x = sv.x; s.vel.y = sv.y;
+    s.angle = wrapAngle(L.angle + (b.rotates ? b.spinAngle : 0));
     s.angVel = 0;
     s.thrusting = 0; s.retroing = 0; s.strafing = 0; s.boosting = false;
     if (c.thrust > 0.2 && hasFuel) {
-      // lift off
+      // lift off along the surface normal
       s.landed = null;
-      const n = terrainNormalAt(L.body, Math.atan2(L.offset.y, L.offset.x));
+      const n = b.rotates ? rotateVec(L.normal, b.spinAngle) : L.normal;
       s.pos.x += n.x * 0.08; s.pos.y += n.y * 0.08;
       s.vel.x += n.x * 1.5; s.vel.y += n.y * 1.5;
       if (s === w.player) { w.stats.launches++; sfx(w, 'launch', s.pos, 0.8); }
@@ -182,6 +186,20 @@ function resolveTerrain(w: World, s: Ship, dt: number): void {
       continue;
     }
     const ang = Math.atan2(dy, dx);
+    // inside a fissure the walls are the surface, not the polar profile
+    if (b.fissures.length) {
+      const f = fissureAt(b, s.pos.x, s.pos.y);
+      if (f) {
+        const hit = circleVsFissure(b, f, s.pos.x, s.pos.y, s.radius * 0.72);
+        if (hit) {
+          s.pos.x += hit.nx * hit.pen; s.pos.y += hit.ny * hit.pen;
+          const radialW = { x: dx / (dist || 1), y: dy / (dist || 1) };
+          const slopeW = Math.acos(clamp(hit.nx * radialW.x + hit.ny * radialW.y, -1, 1));
+          contactResponse(w, s, b, { x: hit.nx, y: hit.ny }, null, slopeW < 0.6, 0);
+        }
+        continue;
+      }
+    }
     const surf = terrainRadiusAt(b, ang);
     const pen = surf + s.radius * 0.72 - dist;
     if (pen <= 0) continue;
@@ -200,59 +218,90 @@ function resolveTerrain(w: World, s: Ship, dt: number): void {
       continue;
     }
     const n = terrainNormalAt(b, ang);
-    const rvx = s.vel.x - b.vel.x, rvy = s.vel.y - b.vel.y;
-    const vn = rvx * n.x + rvy * n.y;           // negative = moving into surface
-    const tvx = rvx - vn * n.x, tvy = rvy - vn * n.y;
-    const vt = Math.hypot(tvx, tvy);
     // push out
     s.pos.x += n.x * pen; s.pos.y += n.y * pen;
-    if (vn >= 0) continue; // moving away (just launched or bouncing)
-
     const seg = terrainSegmentAt(b, ang);
     let pad: Pad | null = null;
     for (const p of b.pads) if (p.segIndex === seg && p.alive !== false) { pad = p; break; }
     const radial = { x: dx / dist, y: dy / dist };
     const slope = Math.acos(clamp(n.x * radial.x + n.y * radial.y, -1, 1));
-    const headingErr = Math.abs(angleDiff(s.angle, Math.atan2(n.y, n.x)));
-    const tol = s.stats.landTol;
-    const flatEnough = pad !== null || slope < 0.20;
-    const gentle = -vn < LAND_VN * tol && vt < LAND_VT * tol && headingErr < LAND_ANG * tol;
-
-    if (flatEnough && gentle && !(s.ai && s.faction === 'enemy' && s.kind !== 'reaver')) {
-      // touchdown: seat the ship on its struts just outside the rim so it stays visible
-      s.pos.x += n.x * 0.3; s.pos.y += n.y * 0.3;
-      s.landed = { body: b, pad, offset: { x: s.pos.x - b.pos.x, y: s.pos.y - b.pos.y }, angle: Math.atan2(n.y, n.x) };
-      s.vel.x = b.vel.x; s.vel.y = b.vel.y;
-      s.angle = s.landed.angle;
-      s.angVel = 0;
-      s.crashSpeed = -vn;
-      if (s === w.player) {
-        w.stats.landings++;
-        sfx(w, 'land', s.pos, 0.9, -vn / LAND_VN);
-      }
-      return;
-    }
-    // impact
-    const impact = -vn;
-    let dmg = 0;
-    if (impact > 2.2) dmg += Math.pow(impact - 2.2, 1.55) * 1.7;
-    if (vt > 3) dmg += (vt - 3) * 1.5;
-    if (!flatEnough && impact <= 2.2 && vt <= 3) dmg += 0.5; // grinding on a slope
-    if (headingErr > LAND_ANG * tol && impact <= LAND_VN * tol && flatEnough) dmg += 4 + impact * 2; // came in on the wrong side
-    if (dmg > 0) {
-      damageShip(w, s, dmg, 'none', 'impact');
-      if (s === w.player) { w.stats.crashes++; w.screenShake = Math.min(1, w.screenShake + Math.min(1, dmg / 30)); }
-      sfx(w, 'impact', s.pos, Math.min(1, 0.3 + dmg / 40), impact);
-      w.explosions.push({ pos: { x: s.pos.x, y: s.pos.y }, time: w.time, size: Math.min(2.5, 0.4 + dmg / 25), color: [1, 0.7, 0.3] });
-    }
-    // bounce with restitution, friction along the surface
-    const rest = impact > 6 ? 0.35 : 0.15;
-    const fric = 0.55;
-    s.vel.x = b.vel.x + tvx * fric - vn * rest * n.x;
-    s.vel.y = b.vel.y + tvy * fric - vn * rest * n.y;
-    // sliding on slopes: gravity component along the slope keeps acting, that's fine
-    s.angVel += (Math.random() - 0.5) * impact * 0.4;
+    contactResponse(w, s, b, n, pad, pad !== null || slope < 0.20, 0.3);
   }
+}
+
+/** Shared surface contact: land if gentle and flat, otherwise take damage and bounce. */
+function contactResponse(w: World, s: Ship, b: Body, n: V2, pad: Pad | null, flatEnough: boolean, seat: number): void {
+  const sv = surfaceVelocity(b, s.pos.x, s.pos.y);
+  const rvx = s.vel.x - sv.x, rvy = s.vel.y - sv.y;
+  const vn = rvx * n.x + rvy * n.y;           // negative = moving into surface
+  const tvx = rvx - vn * n.x, tvy = rvy - vn * n.y;
+  const vt = Math.hypot(tvx, tvy);
+  if (vn >= 0) return; // moving away (just launched or bouncing)
+  const headingErr = Math.abs(angleDiff(s.angle, Math.atan2(n.y, n.x)));
+  const tol = s.stats.landTol;
+  const gentle = -vn < LAND_VN * tol && vt < LAND_VT * tol && headingErr < LAND_ANG * tol;
+  if (flatEnough && gentle && !(s.ai && s.faction === 'enemy' && s.kind !== 'reaver')) {
+    // touchdown: seat the ship on its struts just outside the surface so it stays visible
+    s.pos.x += n.x * seat; s.pos.y += n.y * seat;
+    const local = worldToBody(b, s.pos.x, s.pos.y);
+    const rot = b.rotates ? -b.spinAngle : 0;
+    const nl = rot ? rotateVec(n, rot) : n;
+    s.landed = { body: b, pad, offset: local, angle: Math.atan2(nl.y, nl.x), normal: nl };
+    s.vel.x = sv.x; s.vel.y = sv.y;
+    s.angle = Math.atan2(n.y, n.x);
+    s.angVel = 0;
+    s.crashSpeed = -vn;
+    if (s === w.player) {
+      w.stats.landings++;
+      sfx(w, 'land', s.pos, 0.9, -vn / LAND_VN);
+    }
+    return;
+  }
+  // impact (damage no more than four times a second, so a slow scrape is not a death sentence)
+  const impact = -vn;
+  let dmg = 0;
+  const canHurt = w.time - s.contactDamageTimer > 0.25;
+  if (impact > 2.2) dmg += Math.pow(impact - 2.2, 1.55) * 1.7;
+  if (vt > 3) dmg += (vt - 3) * 1.5;
+  if (!flatEnough && impact <= 2.2 && vt <= 3) dmg += 0.5; // grinding on a slope
+  if (headingErr > LAND_ANG * tol && impact <= LAND_VN * tol && flatEnough) dmg += 4 + impact * 2; // came in on the wrong side
+  if (dmg > 0 && canHurt) {
+    s.contactDamageTimer = w.time;
+    damageShip(w, s, dmg, 'none', 'impact');
+    if (s === w.player) { w.stats.crashes++; w.screenShake = Math.min(1, w.screenShake + Math.min(1, dmg / 30)); }
+    sfx(w, 'impact', s.pos, Math.min(1, 0.3 + dmg / 40), impact);
+    w.explosions.push({ pos: { x: s.pos.x, y: s.pos.y }, time: w.time, size: Math.min(2.5, 0.4 + dmg / 25), color: [1, 0.7, 0.3] });
+  }
+  // bounce with restitution, friction along the surface
+  const rest = impact > 6 ? 0.35 : 0.15;
+  const fric = 0.55;
+  s.vel.x = sv.x + tvx * fric - vn * rest * n.x;
+  s.vel.y = sv.y + tvy * fric - vn * rest * n.y;
+  s.angVel += (Math.random() - 0.5) * impact * 0.4;
+}
+
+/** Surface information under a point: nearest wall inside a fissure, else the polar profile. */
+export function surfaceInfo(w: World, x: number, y: number): { body: Body; normal: V2; vsurf: V2; alt: number; inFissure: boolean } | null {
+  let best: { body: Body; normal: V2; vsurf: V2; alt: number; inFissure: boolean } | null = null;
+  for (const b of w.bodies) {
+    if (b.kind === 'star' || b.kind === 'gas') continue;
+    const dx = x - b.pos.x, dy = y - b.pos.y;
+    const d = Math.hypot(dx, dy);
+    if (d > b.maxRadius + 130) continue;
+    const f = b.fissures.length ? fissureAt(b, x, y) : null;
+    if (f) {
+      const hit = circleVsFissure(b, f, x, y, 60);
+      if (hit) {
+        const alt = 60 - hit.pen;
+        if (!best || alt < best.alt) best = { body: b, normal: { x: hit.nx, y: hit.ny }, vsurf: surfaceVelocity(b, x, y), alt, inFissure: true };
+      }
+      continue;
+    }
+    const ang = Math.atan2(dy, dx);
+    const alt = d - terrainRadiusAt(b, ang);
+    if (!best || alt < best.alt) best = { body: b, normal: terrainNormalAt(b, ang), vsurf: surfaceVelocity(b, x, y), alt, inFissure: false };
+  }
+  return best;
 }
 
 export type DamageSource = 'weapon' | 'impact' | 'heat' | 'star' | 'collision' | 'flare' | 'atmosphere' | 'explosion' | 'none';
@@ -285,6 +334,7 @@ export function killShip(w: World, s: Ship, source: DamageSource): void {
   const big = s.radius > 2;
   w.explosions.push({ pos: { x: s.pos.x, y: s.pos.y }, time: w.time, size: big ? 4 : 1.6, color: s.faction === 'enemy' ? [1, 0.35, 0.2] : [1, 0.8, 0.4] });
   sfx(w, big ? 'bigboom' : 'explode', s.pos, 1, s.radius);
+  if (s.tether) release(w, s);
   if (s.towing) { s.towing.carriedBy = null; s.towing = null; }
   if (s.ai?.carrying) {
     const p = s.ai.carrying;
@@ -315,8 +365,10 @@ export function killShip(w: World, s: Ship, source: DamageSource): void {
 export function spawnPickup(w: World, kind: Pickup['kind'], x: number, y: number, vx: number, vy: number, value: number, home: Pad | null = null, name = ''): Pickup {
   const p: Pickup = {
     id: w.nextId++, kind, pos: { x, y }, vel: { x: vx, y: vy }, radius: kind === 'pod' ? 1.0 : kind === 'wreck' ? 2.2 : 0.7,
-    life: kind === 'pod' ? 1e9 : kind === 'module' || kind === 'wreck' ? 1e9 : 90, value, alive: true, carriedBy: null,
+    life: kind === 'pod' || kind === 'module' || kind === 'wreck' || kind === 'prop' || kind === 'log' ? 1e9 : 90, value, alive: true, carriedBy: null,
     fragile: kind === 'pod', home, moduleId: name, name, spin: (w.rng.next() - 0.5) * 3,
+    mass: kind === 'pod' ? 0.5 : kind === 'wreck' ? 2.5 : kind === 'module' ? 0.4 : kind === 'prop' ? 0.7 : kind === 'log' ? 0.2 : 0.3,
+    tetherable: true, tetheredBy: null, flashUntil: -1e9, glow: 0, socketBody: null, socketLocal: null, beacon: false, indestructible: kind === 'prop' || kind === 'log',
   };
   w.pickups.push(p);
   return p;
@@ -355,6 +407,20 @@ export function stepProjectiles(w: World, dt: number): void {
       const dx = p.pos.x - b.pos.x, dy = p.pos.y - b.pos.y;
       const dist = Math.hypot(dx, dy);
       if (dist > maxTerrainRadius(b) + 1) continue;
+      if (b.fissures.length) {
+        const f = fissureAt(b, p.prevPos.x, p.prevPos.y) ?? fissureAt(b, p.pos.x, p.pos.y);
+        if (f) {
+          const hit = segmentVsFissure(b, f, p.prevPos.x, p.prevPos.y, p.pos.x, p.pos.y);
+          if (hit) {
+            dead = true;
+            const hx = p.prevPos.x + (p.pos.x - p.prevPos.x) * hit.t, hy = p.prevPos.y + (p.pos.y - p.prevPos.y) * hit.t;
+            w.explosions.push({ pos: { x: hx, y: hy }, time: w.time, size: 0.3, color: p.color });
+            if (f.fragile) shedRubble(w, b, hx, hy);
+          }
+          if (dead) break;
+          continue; // inside a fissure the polar surface does not apply
+        }
+      }
       const ang = Math.atan2(dy, dx);
       const surf = b.kind === 'star' ? b.radius : terrainRadiusAt(b, ang);
       if (dist < surf + 0.2) {
@@ -378,6 +444,36 @@ export function stepProjectiles(w: World, dt: number): void {
   }
 }
 
+/** Fragile cave walls shed rubble when shot. */
+function shedRubble(w: World, b: Body, x: number, y: number): void {
+  const n = 1 + (w.rng.chance(0.4) ? 1 : 0);
+  for (let i = 0; i < n; i++) {
+    const ang = w.rng.next() * TAU;
+    const sv = surfaceVelocity(b, x, y);
+    const r = createAsteroid(w, x + Math.cos(ang) * 0.5, y + Math.sin(ang) * 0.5, sv.x + Math.cos(ang) * 2.5, sv.y + Math.sin(ang) * 2.5, 1, -1);
+    r.hp = 6;
+  }
+  sfx(w, 'rockbreak', { x, y }, 0.5, 1);
+}
+
+/** Circle against fissure walls for asteroids and pickups: push out and bounce. Returns true if inside a fissure. */
+function fissureBounce(b: Body, x: number, y: number, radius: number, vel: V2, rest: number): boolean {
+  const f = fissureAt(b, x, y);
+  if (!f) return false;
+  const hit = circleVsFissure(b, f, x, y, radius);
+  if (hit) {
+    const sv = surfaceVelocity(b, x, y);
+    const rvx = vel.x - sv.x, rvy = vel.y - sv.y;
+    const vn = rvx * hit.nx + rvy * hit.ny;
+    if (vn < 0) {
+      vel.x = sv.x + (rvx - vn * hit.nx) * 0.85 - vn * rest * hit.nx;
+      vel.y = sv.y + (rvy - vn * hit.ny) * 0.85 - vn * rest * hit.ny;
+    }
+    return true;
+  }
+  return true;
+}
+
 export function stepAsteroids(w: World, dt: number): void {
   const list = w.asteroids;
   for (let i = list.length - 1; i >= 0; i--) {
@@ -392,6 +488,14 @@ export function stepAsteroids(w: World, dt: number): void {
       const dx = a.pos.x - b.pos.x, dy = a.pos.y - b.pos.y;
       const dist = Math.hypot(dx, dy);
       if (dist > maxTerrainRadius(b) + a.radius + 1) continue;
+      if (b.fissures.length) {
+        const hit = b.fissures.length ? circleVsFissure(b, fissureAt(b, a.pos.x, a.pos.y) ?? b.fissures[0], a.pos.x, a.pos.y, a.radius * 0.7) : null;
+        if (fissureAt(b, a.pos.x, a.pos.y)) {
+          if (hit) { a.pos.x += hit.nx * hit.pen; a.pos.y += hit.ny * hit.pen; }
+          fissureBounce(b, a.pos.x, a.pos.y, a.radius * 0.7, a.vel, 0.3);
+          continue;
+        }
+      }
       const surf = b.kind === 'star' ? b.radius : terrainRadiusAt(b, Math.atan2(dy, dx));
       if (dist < surf + a.radius * 0.6) {
         a.alive = false;
@@ -481,12 +585,20 @@ export function stepPickups(w: World, dt: number): void {
       const dist = Math.hypot(dx, dy);
       if (dist > maxTerrainRadius(b) + p.radius + 1) continue;
       if (b.kind === 'star') { if (dist < b.radius) { p.alive = false; } continue; }
+      if (b.fissures.length && fissureAt(b, p.pos.x, p.pos.y)) {
+        const f = fissureAt(b, p.pos.x, p.pos.y)!;
+        const hit = circleVsFissure(b, f, p.pos.x, p.pos.y, p.radius * 0.7);
+        if (hit) { p.pos.x += hit.nx * hit.pen; p.pos.y += hit.ny * hit.pen; }
+        fissureBounce(b, p.pos.x, p.pos.y, p.radius * 0.7, p.vel, 0.25);
+        continue;
+      }
       const ang = Math.atan2(dy, dx);
       const surf = terrainRadiusAt(b, ang);
       const pen = surf + p.radius * 0.6 - dist;
       if (pen > 0) {
         const n = terrainNormalAt(b, ang);
-        const rvx = p.vel.x - b.vel.x, rvy = p.vel.y - b.vel.y;
+        const bsv = surfaceVelocity(b, p.pos.x, p.pos.y);
+        const rvx = p.vel.x - bsv.x, rvy = p.vel.y - bsv.y;
         const vn = rvx * n.x + rvy * n.y;
         p.pos.x += n.x * pen; p.pos.y += n.y * pen;
         if (vn < 0) {
@@ -506,10 +618,10 @@ export function stepPickups(w: World, dt: number): void {
               sfx(w, 'pickup', p.pos, 0.8);
               continue;
             }
-            p.vel.x = b.vel.x + (rvx - vn * n.x) * 0.5; p.vel.y = b.vel.y + (rvy - vn * n.y) * 0.5;
+            p.vel.x = bsv.x + (rvx - vn * n.x) * 0.5; p.vel.y = bsv.y + (rvy - vn * n.y) * 0.5;
           } else {
-            p.vel.x = b.vel.x + (rvx - vn * n.x) * 0.5 - vn * 0.2 * n.x;
-            p.vel.y = b.vel.y + (rvy - vn * n.y) * 0.5 - vn * 0.2 * n.y;
+            p.vel.x = bsv.x + (rvx - vn * n.x) * 0.5 - vn * 0.2 * n.x;
+            p.vel.y = bsv.y + (rvy - vn * n.y) * 0.5 - vn * 0.2 * n.y;
           }
         }
       }
@@ -594,6 +706,20 @@ export function collide(w: World, dt: number): void {
       }
     }
     if (!hit) {
+      for (const k of w.pickups) {
+        if (!k.alive || k.kind !== 'prop') continue;
+        if (segCircle(p.prevPos.x, p.prevPos.y, p.pos.x, p.pos.y, k.pos.x, k.pos.y, k.radius + p.radius)) {
+          // heavy alloy: shots shove it, nothing more
+          const sp = Math.hypot(p.vel.x, p.vel.y) || 1;
+          k.vel.x += p.vel.x / sp * p.damage * 0.25 / k.mass; k.vel.y += p.vel.y / sp * p.damage * 0.25 / k.mass;
+          w.explosions.push({ pos: { x: p.pos.x, y: p.pos.y }, time: w.time, size: 0.3, color: [1, 0.6, 0.9] });
+          sfx(w, 'rockhit', p.pos, 0.5);
+          hit = true;
+          break;
+        }
+      }
+    }
+    if (!hit) {
       for (const st of w.stations) {
         if (!st.alive || p.faction !== 'enemy') continue;
         if (segCircle(p.prevPos.x, p.prevPos.y, p.pos.x, p.pos.y, st.pos.x, st.pos.y, st.radius)) {
@@ -671,6 +797,34 @@ export function collide(w: World, dt: number): void {
       }
     }
   }
+  // heavy objects (props, wrecks) bump ships: a swinging load can hit you
+  for (const k of w.pickups) {
+    if (!k.alive || (k.kind !== 'prop' && k.kind !== 'wreck')) continue;
+    for (const s of ships) {
+      if (!s.alive || s.docked) continue;
+      const dx = s.pos.x - k.pos.x, dy = s.pos.y - k.pos.y;
+      const rr = s.radius * 0.8 + k.radius * 0.8;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= rr * rr) continue;
+      const d = Math.sqrt(d2) || 0.001;
+      const nx = dx / d, ny = dy / d;
+      const rvx = s.vel.x - k.vel.x, rvy = s.vel.y - k.vel.y;
+      const vn = rvx * nx + rvy * ny;
+      const pen = rr - d;
+      const ms = s.radius * s.radius * s.massMul, mk = k.mass;
+      const tot = ms + mk;
+      s.pos.x += nx * pen * (mk / tot); s.pos.y += ny * pen * (mk / tot);
+      k.pos.x -= nx * pen * (ms / tot); k.pos.y -= ny * pen * (ms / tot);
+      if (vn < 0) {
+        const j = -(1.3) * vn / (1 / ms + 1 / mk);
+        s.vel.x += nx * j / ms; s.vel.y += ny * j / ms;
+        k.vel.x -= nx * j / mk; k.vel.y -= ny * j / mk;
+        const impact = -vn;
+        if (impact > 5) { damageShip(w, s, Math.pow(impact - 5, 1.3) * 1.2 * Math.min(2, mk), 'none', 'collision'); sfx(w, 'impact', s.pos, Math.min(1, impact / 15), impact); }
+        else if (impact > 1.5) sfx(w, 'rockhit', s.pos, 0.4);
+      }
+    }
+  }
   // pickups vs player (and reavers handled in AI)
   const pl = w.player;
   if (pl.alive && !pl.docked) {
@@ -679,7 +833,7 @@ export function collide(w: World, dt: number): void {
       const dx = p.pos.x - pl.pos.x, dy = p.pos.y - pl.pos.y;
       const d = Math.hypot(dx, dy);
       const reach = pl.tractor ? 14 : 0;
-      if (d < pl.radius + p.radius + 0.5) {
+      if (d < pl.radius + p.radius + (p.kind === 'pod' || p.kind === 'prop' ? 0.5 : 1.6)) {
         collectPickup(w, pl, p);
       } else if (reach > 0 && d < reach && p.kind !== 'wreck') {
         // tractor beam: pull gently toward the player
@@ -693,6 +847,14 @@ export function collide(w: World, dt: number): void {
 }
 
 function collectPickup(w: World, pl: Ship, p: Pickup): void {
+  if (p.kind === 'prop') return;
+  if (p.kind === 'log') {
+    p.alive = false;
+    sfx(w, 'pickup', p.pos, 0.9, 1);
+    comm(w, 'KESTREL', `${p.name} RECOVERED. PLAYING BACK.`, [1, 0.9, 0.5], 1);
+    return;
+  }
+  if (p.tetheredBy === pl && p.kind === 'pod') return;
   if (p.kind === 'pod') {
     const rel = Math.hypot(p.vel.x - pl.vel.x, p.vel.y - pl.vel.y);
     if (rel > 9) {
@@ -704,17 +866,16 @@ function collectPickup(w: World, pl: Ship, p: Pickup): void {
       sfx(w, 'impact', p.pos, 0.7, 9);
       return;
     }
-    if (pl.towing) return; // one at a time
-    p.carriedBy = pl;
-    pl.towing = p;
-    sfx(w, 'pickup', p.pos, 0.8, 1);
-    comm(w, 'KESTREL', 'POD SECURED. RETURN IT TO ITS COLONY OR ANY PAD.', [0.6, 1, 0.7], 1);
+    if (pl.tether) return; // the cable is busy
+    attachPickup(w, pl, p);
+    comm(w, 'KESTREL', 'POD ON THE CABLE. TAKE IT HOME GENTLY.', [0.6, 1, 0.7], 1);
     return;
   }
   if (p.kind === 'wreck') return;
   if (p.kind === 'ore' || p.kind === 'salvage') {
     const load = pl.cargo.ore + pl.cargo.salvage;
     if (load >= pl.cargo.capacity) { return; }
+    if (p.tetheredBy === pl) release(w, pl);
     if (p.kind === 'ore') pl.cargo.ore += 1; else pl.cargo.salvage += 1;
     p.alive = false;
     w.score += p.value;
@@ -785,7 +946,7 @@ export function createAsteroid(w: World, x: number, y: number, vx: number, vy: n
   const a: Asteroid = {
     id: w.nextId++, pos: { x, y }, vel: { x: vx, y: vy }, radius: r, hp: size === 3 ? 60 : size === 2 ? 30 : 12,
     variant: w.rng.int(1000), spinAxis: [ax / l, ay / l, az / l], spinRate: (w.rng.next() - 0.5) * 1.5, spinAngle: w.rng.next() * TAU,
-    size, ore: size, rich: false, field, alive: true, rogue: false, killedBy: 'none',
+    size, ore: size, rich: false, field, alive: true, rogue: false, killedBy: 'none', flashUntil: -1e9,
   };
   w.asteroids.push(a);
   return a;

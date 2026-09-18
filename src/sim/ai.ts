@@ -44,7 +44,7 @@ export function spawnSentinel(w: World, pad: Pad): Ship {
   const n = terrainNormalAt(b, pad.angle);
   const x = b.pos.x + Math.cos(pad.angle) * (pad.height + 1.3), y = b.pos.y + Math.sin(pad.angle) * (pad.height + 1.3);
   const s = spawnAiShip(w, 'sentinel', 'enemy', x, y, Math.atan2(n.y, n.x), 'guard', b);
-  s.landed = { body: b, pad, offset: { x: x - b.pos.x, y: y - b.pos.y }, angle: Math.atan2(n.y, n.x) };
+  s.landed = { body: b, pad, offset: { x: x - b.pos.x, y: y - b.pos.y }, angle: Math.atan2(n.y, n.x), normal: n };
   s.ai!.home = pad;
   return s;
 }
@@ -134,6 +134,8 @@ export function updateAi(w: World, s: Ship, dt: number): Controls {
   ai.wantFire = false;
   ai.wantSecondary = false;
   if (ai.target && (!ai.target.alive || ai.target.docked)) ai.target = null;
+  if (s.stunned > 0) return c; // the tide is still: drift
+  if (ai.mode === 'called' && s.kind !== 'sentinel') { calledAi(w, s, ai, c); return c; }
   switch (s.kind) {
     case 'wasp': waspAi(w, s, ai, c, dt); break;
     case 'lancer': lancerAi(w, s, ai, c, dt); break;
@@ -480,10 +482,20 @@ function dreadAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void 
   void dt;
 }
 
+/** Called to the Fault: fly straight at it and never mind the well. */
+function calledAi(w: World, s: Ship, ai: AiState, c: Controls): void {
+  const f = w.slices.fault;
+  if (!f || w.time > w.slices.tideCalledUntil) { ai.mode = 'patrol'; ai.homeBody = null; return; }
+  const dx = f.pos.x - s.pos.x, dy = f.pos.y - s.pos.y;
+  const d = Math.hypot(dx, dy) || 1;
+  velocityControl(w, s, dx / d * 70, dy / d * 70, 1.2, c, true);
+}
+
 function sentinelAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
   const pl = w.player;
   const pad = ai.home as Pad | null;
   if (pad && !pad.alive) { s.alive = false; return; }
+  if (s.landed && s.landed.body === w.slices.cutBody && !w.slices.cutPowered) return; // dark
   if (!pl.alive || pl.docked) return;
   const dx = pl.pos.x - s.pos.x, dy = pl.pos.y - s.pos.y;
   const d = Math.hypot(dx, dy);
