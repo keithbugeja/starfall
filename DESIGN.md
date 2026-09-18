@@ -124,6 +124,48 @@ navigation decision. Five unique modules only come from derelicts and the Fault.
   Fault, the core, sentinels and the regulator all keep a three-second beat. Three on-beat pings
   still every enemy for a minute; three off-beat pings call every enemy into the Fault's well.
 
+## The systemic layer (power, heat, sensors, structures)
+The same rules for everything, so that solutions can be invented rather than found.
+- **Power** (`power.ts`). A source is a socket on a body that seats a core (a prop that keeps the
+  tide's beat). Sockets accept any core. A source feeds everything on its body within its reach: the
+  Cut's socket feeds the whole enemy world; a base's plant feeds 48 units of surface. Consumers are
+  guns, sensors, wave launches, gun regrowth, structure rebuilding and the base glyphs. Loose cores
+  are drawn into any unbroken socket within six units. A cracked housing ejects its core for good.
+- **Heat** (`sense.ts`, `physics.ts`). Every gun heats when it fires; at 1.0 it jams until it cools
+  to 0.3. Ships cool at 0.35 per second in shadow and 0.245 in sunlight; landed guns cool through
+  their base's radiator at 0.06 + 0.5 x (1 - sunlight), or 0.03 without one. The star adds heat inside
+  its danger radius; a flare adds 0.16 per second to anything in sunlight. A base's guns in daylight
+  jam after about fourteen shots and stay jammed twelve seconds; on the night side they never jam;
+  with the fins shot off they jam after six and stay down twenty-four.
+- **Sensors** (`sense.ts`). A sensor sees a ship when distance < range x sqrt(signature) and the line
+  of sight is clear of terrain polygons, cave walls and rocks of size two or more. Signature: 0.12
+  coasting, +0.9 under thrust (+2.2 boosting), +1 for a shot in the last 1.5 s, +3 for a ping in the
+  last 2.5 s, +0.4 x heat, +1 for anything carrying the tide's beat (a powered gun, a core on the
+  cable). A base's mast gives its guns 260 units; without it a gun sees 80. Wasps 320, lancers 300.
+  A target unsensed for three seconds is lost: the ship goes to where it last saw you. The player's
+  radar, lead pip and seekers obey the same rule. A gun holds its fire on a ship carrying a live
+  core: it reads as friendly.
+- **Structures** (`structures.ts`). Plant (integrity 160, armour 40), radiator (30, 0), mast (60, 5).
+  Armour is a per-hit threshold: a pulse never marks a plant; a size-two rock at 20 u/s (energy 1600)
+  cracks it. Ships and rocks collide with them; destroyed ones leave debris pickups. Powered bases
+  rebuild lost fins and masts over a couple of minutes; nobody rebuilds a plant.
+- **Rocks rest.** An asteroid that meets a surface under 7 u/s normal speed stays where it fell and
+  rides the world's rotation. Faster, or rogue, it shatters. The Kestrel cannot lift any rock in a
+  planet's gravity (a size-one rock outweighs its spare thrust), so rocks are placed by dropping them.
+- **Worlds turn.** Planets and moons rotate at 0.005 to 0.011 rad/s (a day of ten to twenty minutes),
+  derived from the body seed so layouts are unchanged. Pads, structures, landed ships and fissures
+  turn with them; rogue rocks lead the surface velocity.
+- **Journal** (`journal.ts`). Keyed, deduplicated observations written only when the pilot was there
+  to see them, in the pilot's words, mixing the useful, the useless and the coincidental. Never a
+  conclusion or an objective.
+- **The Kiln** (`installations.ts`). A base placed in a shallow crater (floor -3, rims +5 at 11-24
+  units) sixty units along the surface from the mid world's colony, on the terminator at generation.
+  Two guns, a plant with its own core, fins and a mast: the same kit every base gets. Nothing about
+  it is scripted; the approaches that work (bait the guns in daylight, take the core during the jam,
+  coast in dark, hide behind the rim, drop a rock on the housing, wait for a flare) fall out of the
+  rules above. The belt is now generated between adjacent orbits so that a world never sweeps
+  through it; before that fix the enemy world took three rocks a minute.
+
 ## Rendering
 WebGL2, no textures, no external art. Instanced flat-shaded meshes with four-band quantised
 lighting from the star plus a faint camera fill. Lines are screen-space expanded quads with a

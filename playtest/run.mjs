@@ -152,6 +152,7 @@ const scenarios = {
   },
   async land({ page }) {
     await api.manual(page, true);
+    await api.newGame(page, 12345);
     const st = await api.state(page);
     const pads = st.bodies.flatMap(b => b.pads.map(p => ({ body: b.name, pad: p.name })));
     for (const target of pads) {
@@ -421,13 +422,14 @@ const moreScenarios = {
       await api.launch(page);
       if (fit === 'armoured') { await page.evaluate(() => window.__sf.buyAll()); await page.evaluate(() => window.__sf.weapon('mass')); }
       const st = await api.state(page);
-      const base = st.pads.find(p => p.kind === 'enemybase');
+      const base = st.pads.find(p => p.name === 'BASE KILO');
       const b = st.bodies.find(x => x.name === base.body);
-      await page.evaluate(([x, y, a]) => window.__sf.teleport(x, y, 0, 0, a + Math.PI), [b.x + Math.cos(base.angle) * (base.height + 55), b.y + Math.sin(base.angle) * (base.height + 55), base.angle]);
+      const bv = await page.evaluate(() => { const b = window.__sf.game.world.enemyCore.body; return { x: b.vel.x, y: b.vel.y, spin: b.spinAngle }; });
+      await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a + Math.PI), [b.x + Math.cos(base.angle + bv.spin) * (base.height + 55), b.y + Math.sin(base.angle + bv.spin) * (base.height + 55), bv.x, bv.y, base.angle + bv.spin]);
       const res = await page.evaluate(([ticks]) => {
         const sf = window.__sf, w = sf.game.world, p = w.player;
         const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
-        const pad = w.pads.find(q => q.kind === 'enemybase');
+        const pad = w.pads.find(q => q.name === 'BASE KILO');
         const b = pad.body;
         const hp0 = pad.enemyHealth;
         for (let t = 0; t < ticks; t++) {
@@ -443,8 +445,9 @@ const moreScenarios = {
           const ax = (ux * (wantVr - vr)) * 1.5 - gx, ay = (uy * (wantVr - vr)) * 1.5 - gy;
           const am = Math.hypot(ax, ay);
           // target: nearest live sentinel, else the pad centre
-          let tx = b.pos.x + Math.cos(pad.angle) * pad.height, ty = b.pos.y + Math.sin(pad.angle) * pad.height;
-          const sent = w.ships.filter(s => s.alive && s.kind === 'sentinel');
+          const pa = pad.angle + b.spinAngle;
+          let tx = b.pos.x + Math.cos(pa) * pad.height, ty = b.pos.y + Math.sin(pa) * pad.height;
+          const sent = w.ships.filter(s => s.alive && s.kind === 'sentinel' && s.ai.home === pad);
           if (sent.length) { tx = sent[0].pos.x; ty = sent[0].pos.y; }
           const aim = Math.atan2(ty - p.pos.y, tx - p.pos.x);
           // thrust briefly when we need to hold altitude, otherwise aim and fire
@@ -456,9 +459,9 @@ const moreScenarios = {
           sf.step(1);
         }
         sf.controls(null);
-        return { alive: p.alive, hull: p.hull, baseAlive: pad.alive, baseHp: pad.enemyHealth, hp0, sentinels: w.ships.filter(s => s.alive && s.kind === 'sentinel').length, time: w.time };
+        return { alive: p.alive, hull: p.hull, baseAlive: pad.alive, baseHp: pad.enemyHealth, hp0, sentinels: w.ships.filter(s => s.alive && s.kind === 'sentinel' && s.ai.home === pad).length, time: w.time, guns: w.ships.filter(s => s.kind === 'sentinel' && s.ai.home === pad).map(g => `${g.alive ? 'up' : 'dead'} heat${g.heat.toFixed(2)}${g.overheated ? 'J' : ''}`), sun: sf.bases().find(q => q.name === 'BASE KILO').sun, cause: p.lastDamageSource };
       }, [120 * 90]);
-      console.log(fit, '=>', res.alive ? 'ALIVE' : 'DEAD', 'hull', res.hull.toFixed(0), 'base', res.baseAlive ? 'STANDS ' + res.baseHp.toFixed(0) + '/' + res.hp0 : 'DESTROYED', 'sentinels left', res.sentinels, 'time', res.time.toFixed(0));
+      console.log(fit, '=>', res.alive ? 'ALIVE' : 'DEAD (' + res.cause + ')', 'hull', res.hull.toFixed(0), 'base', res.baseAlive ? 'STANDS ' + res.baseHp.toFixed(0) + '/' + res.hp0 : 'DESTROYED', 'its guns', res.guns.join(','), 'sun', res.sun.toFixed(2), 'time', res.time.toFixed(0));
       await api.shot(page, 'assault_' + fit, 20);
     }
   },
@@ -961,7 +964,7 @@ const sliceScenarios = {
     await api.run(page, { thrust: 1 }, 1.2);
     await page.evaluate(() => window.__sf.refuel());
     res = await autoLand(page, 'PILGRIM', 'STERN MAIN TANK', 120);
-    console.log('LAND stern main:', res.landed ? 'OK' : (res.alive ? 'NOT LANDED' : 'DEAD'), 'hull', res.hull.toFixed(0), 'player fuel', res.fuel.toFixed(0));
+    console.log('LAND stern main:', res.landed ? 'OK' : (res.alive ? 'NOT LANDED' : 'DEAD'), 'hull', res.hull.toFixed(0), 'player fuel', res.fuel.toFixed(0), 'cause', (await api.state(page)).player.lastDamageSource, 'hostiles near', (await api.state(page)).ships.filter(s => s.faction === 'enemy' && Math.hypot(s.x - sl.pilgrim.x, s.y - sl.pilgrim.y) < 400).map(s => s.kind + ':' + s.mode).join(','));
     if (!res.landed) console.log(res.log.slice(-6).map(l => `${l.t}s alt${l.alt} arc${l.arc} vr${l.vr} vt${l.vt}`).join(' | '));
     if (res.landed) { await page.evaluate(() => window.__sf.transfer(true)); await api.run(page, {}, 8); await page.evaluate(() => window.__sf.transfer(false)); }
     for (let i = 0; i < 6; i++) { await api.run(page, {}, 10); sl = await page.evaluate(() => window.__sf.slice()); console.log(`  +${(i + 1) * 10}s angVel ${sl.pilgrim.angVel.toFixed(4)} peri ${sl.pilgrimPeri.toFixed(0)} saved ${sl.pilgrim.saved}`); }
@@ -1030,9 +1033,16 @@ const sliceScenarios = {
     await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [mouth.x + rx / rl * 25, mouth.y + ry / rl * 25, sl.signal.rock.vx, sl.signal.rock.vy, Math.atan2(ry, rx)]);
     await api.shot(page, 'signal_mouth', 40);
     const inn = await follow(page, sl.signal.rock.pathLocal, { seconds: 120, tol: 2.0, maxSpeed: 4, gain: 2.4, body: 'HOLLOW' });
+    // the box swings through the hollow's centre (linear gravity inside a body): go and meet it
+    for (let i = 0; i < 3; i++) {
+      const bl = await page.evaluate(() => { const w = window.__sf.game.world, b = w.slices.blackBox, r = w.slices.rock; if (!b || !b.alive) return null; const c = Math.cos(-r.spinAngle), s = Math.sin(-r.spinAngle); const dx = b.pos.x - r.pos.x, dy = b.pos.y - r.pos.y; return { x: dx * c - dy * s, y: dx * s + dy * c }; });
+      if (!bl) break;
+      await follow(page, [bl], { seconds: 12, tol: 1.2, maxSpeed: 3, gain: 2.4, body: 'HOLLOW' });
+    }
     let st = await api.state(page);
     sl = await page.evaluate(() => window.__sf.slice());
-    console.log('CAVE: reached', inn.reached, '/', inn.of, 'alive', inn.alive, 'hull', inn.hull.toFixed(0), 'box alive', sl.signal.box.alive, 'log line', sl.signal.logLine);
+    console.log('CAVE: reached', inn.reached, '/', inn.of, 'alive', inn.alive, 'hull', inn.hull.toFixed(0), 'box alive', sl.signal.box.alive, 'log line', sl.signal.logLine, 'box dist', sl.signal.box.alive ? Math.hypot(sl.signal.box.x - st.player.x, sl.signal.box.y - st.player.y).toFixed(1) : '-', 'end-of-path dist', Math.hypot(path[path.length - 1].x - st.player.x, path[path.length - 1].y - st.player.y).toFixed(1));
+    if (sl.signal.box.alive) { const probe = await page.evaluate(() => { const w = window.__sf.game.world, b = w.slices.blackBox, r = w.slices.rock; const c = Math.cos(-r.spinAngle), s = Math.sin(-r.spinAngle); const dx = b.pos.x - r.pos.x, dy = b.pos.y - r.pos.y; return { boxLocal: { x: (dx * c - dy * s).toFixed(1), y: (dx * s + dy * c).toFixed(1) }, rockSpin: r.spinAngle.toFixed(3), rotates: r.rotates, inFissure: !!w.slices.rock.fissures[0] }; }); console.log('   box probe', JSON.stringify(probe), 'path end local', JSON.stringify(sl.signal.rock.pathLocal[sl.signal.rock.pathLocal.length - 1])); }
     await api.shot(page, 'signal_cave', 30);
     await api.run(page, {}, 16);
     st = await api.state(page);
@@ -1044,6 +1054,480 @@ const sliceScenarios = {
     st = await api.state(page);
     console.log('shots inside the cave: asteroids', a0, '->', st.asteroids, 'hull', st.player.hull.toFixed(0));
     await api.shot(page, 'signal_rubble', 20);
+  },
+
+  // ------------------------------------------------------------------ THE KILN
+  // Nothing below is scripted in the game. These are the approaches the design memo proposed, plus a
+  // few it did not, tried against the general rules to see which of them the rules actually permit.
+  async kiln({ page }) {
+    await api.manual(page, true);
+    const parts = (process.env.KILN_PARTS || '1,2,3,4,5,6,7,8,9').split(',');
+    const P = (n) => parts.includes(n);
+    const seed = 2024;
+    const bases = async () => page.evaluate(() => window.__sf.bases());
+    const sense = async () => page.evaluate(() => window.__sf.sense());
+    const kilnOf = async () => (await bases()).find(b => b.name === 'THE KILN');
+    /** Put the Kiln's pad at a given sunlight by turning its world (a test tool, not a game feature). */
+    const setDay = async (wantSun) => page.evaluate(([wantSun]) => {
+      const sf = window.__sf, w = sf.game.world;
+      const pad = w.pads.find(p => p.name === 'THE KILN'); const b = pad.body;
+      const sunAng = Math.atan2(w.star.pos.y - b.pos.y, w.star.pos.x - b.pos.x);
+      // pad world angle = pad.angle + spinAngle; want it at sunAng (day) or sunAng + PI (night) or the terminator
+      const want = wantSun === 'day' ? sunAng : wantSun === 'night' ? sunAng + Math.PI : sunAng + Math.PI / 2;
+      sf.spinTo(b.name, want - pad.angle);
+      sf.step(1);
+      return sf.bases().find(q => q.name === 'THE KILN').sun;
+    }, [wantSun]);
+    /** World point at an arc offset (units along the surface, + = counter-clockwise) and altitude from the Kiln pad. */
+    const at = async (arc, alt) => page.evaluate(([arc, alt]) => {
+      const sf = window.__sf, w = sf.game.world;
+      const pad = w.pads.find(p => p.name === 'THE KILN'); const b = pad.body;
+      const a = pad.angle + (b.rotates ? b.spinAngle : 0) + arc / b.radius;
+      // altitude above the local terrain, so 'low' really is low
+      const seg = b.segments; const la = a - (b.rotates ? b.spinAngle : 0);
+      const t = ((la / (2 * Math.PI)) * seg % seg + seg) % seg; const i0 = Math.floor(t);
+      const r = b.terrain[i0] + alt;
+      return { x: b.pos.x + Math.cos(a) * r, y: b.pos.y + Math.sin(a) * r, vx: b.vel.x, vy: b.vel.y, a, body: b.name };
+    }, [arc, alt]);
+    const place = async (arc, alt, facing = 'down') => {
+      const q = await at(arc, alt);
+      await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [q.x, q.y, q.vx, q.vy, facing === 'down' ? q.a + Math.PI : q.a]);
+      return q;
+    };
+    /** Hover at a Kiln-relative point for a while. engines: 'on' holds position with thrust, 'off' drifts. Samples once a second. */
+    const hover = async (arc, alt, seconds, engines = 'on', stopWhenJammed = false) => page.evaluate(([arc, alt, ticks, engines, stopWhenJammed]) => {
+      const sf = window.__sf, w = sf.game.world, p = w.player;
+      const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+      const pad = w.pads.find(q => q.name === 'THE KILN'); const b = pad.body;
+      const samples = []; let shotsAtMe = 0; let hitsOnMe = 0; let lastHull = p.hull;
+      for (let t = 0; t < ticks; t++) {
+        if (!p.alive) break;
+        if (stopWhenJammed && t % 12 === 0) { const gs = w.ships.filter(s => s.alive && s.kind === 'sentinel' && s.ai.home === pad); if (gs.length && gs.every(g => g.overheated)) break; }
+        const a = pad.angle + b.spinAngle + arc / b.radius;
+        const r = pad.height + alt;
+        const wx = b.pos.x + Math.cos(a) * r, wy = b.pos.y + Math.sin(a) * r;
+        if (engines === 'on') {
+          const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+          const wantVx = b.vel.x + (wx - p.pos.x) * 0.8, wantVy = b.vel.y + (wy - p.pos.y) * 0.8;
+          const ax = (wantVx - p.vel.x) * 2 - gx, ay = (wantVy - p.vel.y) * 2 - gy;
+          const am = Math.hypot(ax, ay);
+          const heading = Math.atan2(ay, ax), err = wrap(heading - p.angle);
+          sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: am > 0.3 && Math.abs(err) < 0.45 ? Math.min(1, am / p.stats.thrust) : 0, retro: 0, strafe: 0, fire: false, boost: false });
+        } else sf.controls({ turn: 0, thrust: 0, retro: 0, strafe: 0, fire: false, boost: false });
+        sf.step(1);
+        if (p.hull < lastHull) { hitsOnMe++; lastHull = p.hull; }
+        if (t % 120 === 0) {
+          const K = sf.bases().find(q => q.name === 'THE KILN');
+          const guns = K.guns.map(g => `${g.heat.toFixed(2)}${g.overheated ? 'J' : ''}${g.target ? '*' : ''}`).join('/');
+          shotsAtMe = K.guns.reduce((s, g) => s + g.shots, 0);
+          const sees = sf.sense().filter(s => s.kind === 'sentinel' && s.d < 400).some(s => s.seesPlayer);
+          samples.push({ t: t / 120, guns, sees, shots: shotsAtMe, hull: p.hull.toFixed(0), alt: (Math.hypot(p.pos.x - b.pos.x, p.pos.y - b.pos.y) - pad.height).toFixed(0), sun: K.sun.toFixed(2), rad: K.radiator ? K.radiator.integrity.toFixed(0) : 'x' });
+        }
+      }
+      sf.controls(null);
+      return { samples, alive: p.alive, hull: p.hull, hits: hitsOnMe, t: w.time };
+    }, [arc, alt, Math.round(seconds * 120), engines, stopWhenJammed]);
+    /** Hover above the guns' reach over a surface arc with a rock on the cable, lead the world's turn, let go, and report where it fell. */
+    const dropRock = async (arc, size) => {
+      const alt = 134;
+      // aim: a hovering ship tracks a surface point, so the rock leaves with the surface's angular rate at a
+      // larger radius and lands ahead of it. Integrate the fall and pick the release arc that lands on target.
+      const lead = await page.evaluate(([arc, alt]) => {
+        const sf = window.__sf, w = sf.game.world; const pad = w.pads.find(p => p.name === 'THE KILN'); const b = pad.body;
+        const landing = (relArc) => {
+          const a0 = pad.angle + b.spinAngle + relArc / b.radius; const r0 = pad.height + alt;
+          let x = b.pos.x + Math.cos(a0) * r0, y = b.pos.y + Math.sin(a0) * r0;
+          let vx = b.vel.x - Math.sin(a0) * b.spin * r0, vy = b.vel.y + Math.cos(a0) * b.spin * r0; // hover velocity over a turning surface
+          let bx = b.pos.x, by = b.pos.y, spin = b.spinAngle;
+          const dt = 0.05;
+          for (let t = 0; t < 120; t += dt) {
+            const [gx, gy] = sf.gravity(x, y); vx += gx * dt; vy += gy * dt; x += vx * dt; y += vy * dt; bx += b.vel.x * dt; by += b.vel.y * dt; spin += b.spin * dt;
+            const rr = Math.hypot(x - bx, y - by);
+            const ang = Math.atan2(y - by, x - bx);
+            const seg = b.segments; const la = ang - spin; const i0 = Math.floor(((la / (2 * Math.PI)) * seg % seg + seg) % seg);
+            if (rr <= b.terrain[i0] + 1) { const d = la - pad.angle; return Math.atan2(Math.sin(d), Math.cos(d)) * b.radius; }
+          }
+          return NaN;
+        };
+        // secant iteration on the release arc
+        let a1 = arc, l1 = landing(a1);
+        let a2 = arc - (l1 - arc), l2 = landing(a2);
+        for (let i = 0; i < 4 && Math.abs(l2 - arc) > 0.3 && isFinite(l2) && l2 !== l1; i++) { const a3 = a2 - (l2 - arc) * (a2 - a1) / (l2 - l1); a1 = a2; l1 = l2; a2 = a3; l2 = landing(a2); }
+        return { arc: a2 - arc, spin: b.spin, predicted: l2 };
+      }, [arc, alt]);
+      // a moon may be sweeping through this altitude: let it pass first
+      const waited = await page.evaluate(([arc, alt]) => {
+        const sf = window.__sf, w = sf.game.world; const pad = w.pads.find(p => p.name === 'THE KILN'); const b = pad.body;
+        let t = 0;
+        const moons = w.bodies.filter(m => m.kind === 'moon' && m.orbit && m.orbit.parent === b);
+        const clear = () => {
+          for (let dtq = 0; dtq <= 70; dtq += 5) {
+            const a = pad.angle + b.spinAngle + b.spin * dtq + arc / b.radius;
+            for (let h = 20; h <= alt + 10; h += 30) {
+              const hx = Math.cos(a) * (pad.height + h), hy = Math.sin(a) * (pad.height + h); // relative to the world centre
+              for (const m of moons) { const ma = m.orbit.phase + m.orbit.angularSpeed * (w.time + dtq); const mx = Math.cos(ma) * m.orbit.radius, my = Math.sin(ma) * m.orbit.radius; if (Math.hypot(mx - hx, my - hy) < m.maxRadius + 60) return false; }
+            }
+          }
+          return true;
+        };
+        for (; t < 120 * 600; t += 600) { if (clear()) break; sf.step(600); }
+        return t / 120;
+      }, [arc + lead.arc, alt]);
+      const q = await at(arc + lead.arc, alt);
+      await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [q.x, q.y, q.vx, q.vy, q.a]);
+      await untether(page);
+      await page.evaluate(([ax, ay, size]) => window.__sf.spawnRock(-ax * 9, -ay * 9, size), [Math.cos(q.a), Math.sin(q.a), size]);
+      const latched = await page.evaluate(() => window.__sf.tether());
+      const hold = await hover(arc + lead.arc, alt, 3, 'on');
+      // let the load stop swinging before letting go (release at the bottom of a swing, load still)
+      const settle = await page.evaluate(([arc, alt]) => {
+        const sf = window.__sf, w = sf.game.world, p = w.player; const pad = w.pads.find(q => q.name === 'THE KILN'); const b = pad.body;
+        const wrap = q => Math.atan2(Math.sin(q), Math.cos(q));
+        const a0 = w.asteroids.find(x => x.handled);
+        let t = 0, rel = 99;
+        if (!a0) return { t: 0, rel: -1 };
+        for (; t < 120 * 40; t++) {
+          const aa = pad.angle + b.spinAngle + arc / b.radius; const wx = b.pos.x + Math.cos(aa) * (pad.height + alt), wy = b.pos.y + Math.sin(aa) * (pad.height + alt);
+          const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+          const svx = b.vel.x - Math.sin(aa) * b.spin * (pad.height + alt), svy = b.vel.y + Math.cos(aa) * b.spin * (pad.height + alt);
+          const ax = (svx + (wx - p.pos.x) * 0.25 - p.vel.x) * 1.2 - gx, ay = (svy + (wy - p.pos.y) * 0.25 - p.vel.y) * 1.2 - gy;
+          const am = Math.hypot(ax, ay), err = wrap(Math.atan2(ay, ax) - p.angle);
+          sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: am > 0.3 && Math.abs(err) < 0.45 ? Math.min(1, am / p.stats.thrust) : 0, retro: 0, strafe: 0, fire: false, boost: false });
+          sf.step(1);
+          rel = Math.hypot(a0.vel.x - p.vel.x, a0.vel.y - p.vel.y);
+          if (t > 240 && rel < 0.3) break;
+        }
+        sf.controls(null);
+        return { t: t / 120, rel };
+      }, [arc + lead.arc, alt]);
+      await untether(page);
+      const fall = await page.evaluate(([arc]) => {
+        const sf = window.__sf, w = sf.game.world; const a = w.asteroids.find(x => x.handled); const pad = w.pads.find(p => p.name === 'THE KILN'); const b = pad.body;
+        if (!a) return { alive: false, rested: false, maxV: 0, t: 0, landedArc: 0, wantArc: arc, log: ['the rock broke up on the cable before release'] };
+        let maxV = 0, tEnd = 0;
+        for (let t = 0; t < 120 * 45; t++) { sf.step(1); tEnd = t / 120; if (a.alive) maxV = Math.max(maxV, Math.hypot(a.vel.x - b.vel.x, a.vel.y - b.vel.y)); if (!a.alive || a.rested) break; }
+        const ang = Math.atan2(a.pos.y - b.pos.y, a.pos.x - b.pos.x) - b.spinAngle - pad.angle;
+        const landedArc = Math.atan2(Math.sin(ang), Math.cos(ang)) * b.radius;
+        return { alive: a.alive, rested: a.rested, maxV, t: tEnd, landedArc, wantArc: arc, log: w.log.slice(-2).map(e => e.kind + ':' + e.text) };
+      }, [arc]);
+      return `waited ${waited.toFixed(0)} s for the moon, latched ${latched}, hover hull ${hold.hull.toFixed(0)}, settled in ${settle.t.toFixed(1)} s (load ${settle.rel.toFixed(2)} u/s), release ${lead.arc.toFixed(1)} from target (predicted landing ${lead.predicted.toFixed(1)}), fell ${fall.t.toFixed(1)} s to ${fall.maxV.toFixed(1)} u/s, ${fall.alive ? (fall.rested ? 'RESTS' : 'still moving') : 'SHATTERED'} at arc ${fall.landedArc.toFixed(1)} (wanted ${fall.wantArc}); log ${fall.log.join(' ; ')}`;
+    };
+    const fmt = (r) => r.samples.map(s => `${s.t}s g[${s.guns}] ${s.sees ? 'SEEN' : 'unseen'} shots${s.shots} hull${s.hull}`).join(' | ');
+
+    await api.newGame(page, seed);
+    await api.launch(page);
+    await api.step(page, 2);
+    let K = await kilnOf();
+    console.log('THE KILN on', K.body, 'sun', K.sun.toFixed(2), 'powered', K.powered, 'guns', K.guns.length, 'plant', K.plant && K.plant.integrity, 'radiator', K.radiator && K.radiator.integrity, 'mast', K.mast && K.mast.integrity, 'socket', K.socket && K.socket.core, 'range', K.socket && K.socket.range);
+    await place(0, 60);
+    await api.shot(page, 'kiln_above', 60);
+
+    // ---- 1. sensing survey: where do the guns see a ship, engines off vs on, above vs behind the rim
+    if (P('1')) {
+    console.log('--- 1. SENSING SURVEY (sees = any Kiln gun senses the player)');
+    for (const [arc, alt, label] of [[0, 30, 'above, low'], [0, 80, 'above'], [0, 150, 'above, high'], [0, 250, 'above, very high'], [40, 4, 'side, hugging the ground'], [40, 14, 'side, over the rim'], [60, 4, 'far side, low'], [30, 40, 'side, high']]) {
+      await place(arc, alt);
+      const off = await page.evaluate(() => { const sf = window.__sf; sf.controls({ thrust: 0 }); sf.step(12); const r = sf.sense().filter(s => s.kind === 'sentinel' && s.d < 400); sf.controls(null); return { sees: r.some(s => s.seesPlayer), blocker: r[0] && r[0].blocker, sig: sf.sense().find(s => s.kind === 'player').signature }; });
+      const on = await page.evaluate(() => { const sf = window.__sf; sf.controls({ thrust: 1 }); sf.step(12); const r = sf.sense().filter(s => s.kind === 'sentinel' && s.d < 400); const sig = sf.sense().find(s => s.kind === 'player').signature; sf.controls(null); return { sees: r.some(s => s.seesPlayer), sig }; });
+      console.log(`  ${label.padEnd(24)} arc ${arc} alt ${alt}: engines off ${off.sees ? 'SEEN' : 'unseen'} (sig ${off.sig.toFixed(2)}${off.blocker ? ', blocked by ' + off.blocker : ''})  engines on ${on.sees ? 'SEEN' : 'unseen'} (sig ${on.sig.toFixed(2)})`);
+    }
+
+    }
+    // ---- 2. thermal overload: sit in the guns' sights and let them fire, day and night
+    if (P('2')) {
+    for (const day of ['day', 'night']) {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      const sun = await setDay(day);
+      await place(0, 100);
+      const r = await hover(0, 100, 50, 'on');
+      console.log(`--- 2. THERMAL, ${day.toUpperCase()} (sun ${sun.toFixed(2)}): ${r.alive ? 'alive' : 'DEAD'} hull ${r.hull.toFixed(0)}, hits taken ${r.hits}`);
+      console.log('   ', fmt(r));
+      if (day === 'day') await api.shot(page, 'kiln_thermal_day', 10);
+    }
+
+    }
+    // ---- 3. environmental timing: a flare on the day side
+    if (P('3')) {
+    {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      const sun = await setDay('day');
+      await place(0, 140);
+      await page.evaluate(() => window.__sf.forceFlare());
+      const r = await hover(0, 140, 40, 'on');
+      console.log(`--- 3. FLARE ON THE DAY SIDE (sun ${sun.toFixed(2)}): ${r.alive ? 'alive' : 'DEAD'} hull ${r.hull.toFixed(0)}`);
+      console.log('   ', fmt(r));
+    }
+
+    }
+    // ---- 4. line of sight: a rock parked on the rim, then an approach in its lee
+    if (P('4')) {
+    {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      await setDay('night');
+      // drop a big rock onto the rim between the guns and the approach lane
+      const rim = await at(18, 6);
+      const rockId = await page.evaluate(([x, y, vx, vy]) => window.__sf.spawnRockAt(x, y, vx, vy, 3), [rim.x, rim.y, rim.vx, rim.vy]);
+      await api.step(page, 120 * 6);
+      const rock = await page.evaluate(([id]) => { const a = window.__sf.game.world.asteroids.find(a => a.id === id); return a ? { alive: a.alive, rested: a.rested, r: a.radius } : null; }, [rockId]);
+      console.log('--- 4. LINE OF SIGHT: rock on the rim', rock);
+      for (const [arc, alt] of [[40, 10], [40, 18], [30, 14], [26, 12]]) {
+        await place(arc, alt);
+        const r = await page.evaluate(() => { const sf = window.__sf; sf.controls({ thrust: 1 }); sf.step(12); const s = sf.sense().filter(s => s.kind === 'sentinel' && s.d < 400); sf.controls(null); return s.map(q => (q.seesPlayer ? 'SEEN' : 'unseen') + (q.blocker ? '(' + q.blocker + ')' : '')).join(','); });
+        console.log(`   engines on at arc ${arc} alt ${alt}: ${r}`);
+      }
+      await place(30, 14);
+      await api.shot(page, 'kiln_rock_lee', 30);
+      // can a rock be towed along the ground at all in this gravity? latch one and pull
+      await api.newGame(page, seed);
+      await api.launch(page);
+      await setDay('night');
+      for (const size of [3, 2, 1]) {
+        const q = await at(70, 6);
+        await page.evaluate(([x, y, vx, vy, a]) => window.__sf.teleport(x, y, vx, vy, a), [q.x, q.y, q.vx, q.vy, q.a]);
+        await untether(page);
+        await page.evaluate(([ax, ay, size]) => window.__sf.spawnRockAt(window.__sf.game.world.player.pos.x - ax * 4.5, window.__sf.game.world.player.pos.y - ay * 4.5, window.__sf.game.world.player.vel.x, window.__sf.game.world.player.vel.y, size), [Math.cos(q.a), Math.sin(q.a), size]);
+        await api.step(page, 120);
+        const latched = await page.evaluate(() => window.__sf.tether());
+        const lift = await pull(page, q.a, 8, 1);
+        const rockAlt = await page.evaluate(() => { const w = window.__sf.game.world; const pad = w.pads.find(p => p.name === 'THE KILN'); const b = pad.body; const a = w.asteroids.find(x => x.handled); return a ? (Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) - pad.height).toFixed(1) : 'gone'; });
+        console.log(`   lift a size-${size} rock straight up at full thrust for 8 s: latched ${latched}, peak tension ${lift.peak.toFixed(0)}, cable ${lift.snapped ? 'PARTED' : 'held'}, rock alt now ${rockAlt}`);
+      }
+      // so the way to put a rock on the rim is to drop it there from above the guns' reach
+      await api.newGame(page, seed);
+      await api.launch(page);
+      await setDay('night');
+      const dropRim = await dropRock(18, 2);
+      console.log(`   drop a size-2 rock onto the rim from above gun range: ${dropRim}`);
+      for (const [arc, alt] of [[40, 18], [30, 14], [26, 12]]) {
+        await place(arc, alt);
+        const r = await page.evaluate(() => { const sf = window.__sf; sf.controls({ thrust: 1 }); sf.step(12); const s = sf.sense().filter(s => s.kind === 'sentinel' && s.d < 400); sf.controls(null); return s.map(q => (q.seesPlayer ? 'SEEN' : 'unseen') + (q.blocker ? '(' + q.blocker + ')' : '')).join(','); });
+        console.log(`   after the drop, engines on at arc ${arc} alt ${alt}: ${r}`);
+      }
+    }
+
+    }
+    // ---- 5. low-emission approach: coast in with the engines off, night side, and see when the guns wake
+    if (P('5')) {
+    for (const mode of ['off', 'ping']) {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      await setDay('night');
+      const q = await at(0, 220);
+      // fall straight in at 6 u/s
+      await page.evaluate(([x, y, vx, vy, a, ax, ay]) => window.__sf.teleport(x, y, vx - ax * 6, vy - ay * 6, a + Math.PI), [q.x, q.y, q.vx, q.vy, q.a, Math.cos(q.a), Math.sin(q.a)]);
+      const r = await page.evaluate(([mode]) => {
+        const sf = window.__sf, w = sf.game.world, p = w.player;
+        const pad = w.pads.find(q => q.name === 'THE KILN'); const b = pad.body;
+        let seenAt = null, firstShot = null, hull0 = p.hull;
+        for (let t = 0; t < 120 * 40; t++) {
+          const alt = Math.hypot(p.pos.x - b.pos.x, p.pos.y - b.pos.y) - pad.height;
+          if (alt < 12) break;
+          // 'ping' falls the same way but scans every two seconds
+          sf.controls({ turn: 0, thrust: 0, retro: 0, strafe: 0, fire: false, boost: false });
+          if (mode === 'ping' && t % 240 === 0) sf.ping();
+          sf.step(1);
+          if (t % 12 === 0) {
+            const s = sf.sense().filter(q => q.kind === 'sentinel' && q.d < 400);
+            if (seenAt === null && s.some(q => q.seesPlayer)) seenAt = alt;
+            if (firstShot === null && p.hull < hull0) firstShot = alt;
+          }
+        }
+        sf.controls(null);
+        return { seenAt, firstShot, hull: p.hull, alive: p.alive };
+      }, [mode]);
+      console.log(`--- 5. APPROACH engines ${mode}: first sensed at alt ${r.seenAt === null ? 'never' : r.seenAt.toFixed(0)}, first hit at alt ${r.firstShot === null ? 'never' : r.firstShot.toFixed(0)}, hull ${r.hull.toFixed(0)}`);
+    }
+
+    }
+    // ---- 6. power removal: jam the guns by daylight, then go down and take the core
+    if (P('6')) {
+    {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      await setDay('day');
+      await place(0, 100);
+      const bait = await hover(0, 100, 60, 'on', true);
+      const jammed = bait.samples[bait.samples.length - 1];
+      console.log(`--- 6. POWER: bait for ${bait.samples.length} s until both guns jammed [${jammed.guns}] hull ${bait.hull.toFixed(0)}`);
+      K = await kilnOf();
+      // dive to the socket and latch the core
+      const sock = await page.evaluate(() => { const w = window.__sf.game.world; const pad = w.pads.find(p => p.name === 'THE KILN'); const src = w.power.find(s => s.name === 'THE KILN'); const b = pad.body; const c = Math.cos(-b.spinAngle), s = Math.sin(-b.spinAngle); const wp = { x: src.socketLocal.x, y: src.socketLocal.y }; const l = Math.hypot(wp.x, wp.y); return { local: wp, up: { x: wp.x / l, y: wp.y / l }, body: b.name }; });
+      const path = [{ x: sock.local.x + sock.up.x * 30, y: sock.local.y + sock.up.y * 30 }, { x: sock.local.x + sock.up.x * 4.5, y: sock.local.y + sock.up.y * 4.5 }];
+      const dive = await follow(page, path, { seconds: 40, tol: 2.0, maxSpeed: 8, gain: 2.4, body: sock.body });
+      const latched = await page.evaluate(() => window.__sf.tether());
+      const cores = await page.evaluate(() => window.__sf.cores());
+      console.log(`   dive: reached ${dive.reached}/${dive.of} hull ${dive.hull.toFixed(0)}; latched ${latched}`, cores.filter(c => c.tethered));
+      const out = await follow(page, [{ x: sock.local.x + sock.up.x * 40, y: sock.local.y + sock.up.y * 40 }], { seconds: 40, tol: 3, maxSpeed: 6, gain: 2.2, body: sock.body });
+      K = await kilnOf();
+      const st = await api.state(page);
+      console.log(`   climb out: reached ${out.reached}/${out.of} tethered ${out.tethered} hull ${out.hull.toFixed(0)}; Kiln powered ${K.powered}, socket core ${K.socket.core}, guns [${K.guns.map(g => g.target ? '*' : '-').join('')}]`);
+      console.log('   comms:', st.comms.slice(-3));
+      await api.shot(page, 'kiln_core_out', 20);
+      // carry the core past the (dark) guns: nothing to see. Now put it back and see the pass work on live guns
+      const back = await follow(page, [{ x: sock.local.x + sock.up.x * 4.5, y: sock.local.y + sock.up.y * 4.5 }], { seconds: 40, tol: 2, maxSpeed: 6, gain: 2.2, body: sock.body });
+      await untether(page);
+      await api.step(page, 240);
+      K = await kilnOf();
+      console.log(`   core returned: powered ${K.powered} (reached ${back.reached})`);
+      await page.evaluate(() => window.__sf.heal());
+      const relatch = await page.evaluate(() => window.__sf.tether());
+      const pass = await hover(6, 12, 20, 'on');
+      console.log(`   holding the core on the cable in front of live guns: latched ${relatch}, hits taken ${pass.hits}, hull ${pass.hull.toFixed(0)}, powered now ${(await kilnOf()).powered}`);
+      const jn = await page.evaluate(() => window.__sf.journal());
+      console.log('   journal:', jn.map(e => e.text));
+    }
+
+    }
+    // ---- 7. not in the memo: drop a rock on the plant
+    if (P('7')) {
+    {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      await setDay('night');
+      K = await kilnOf();
+      const plantLocal = await page.evaluate(() => { const w = window.__sf.game.world; const pad = w.pads.find(p => p.name === 'THE KILN'); return { local: pad.plant.local, up: pad.plant.normalLocal, body: pad.body.name }; });
+      const drop = await dropRock(14.5, 2);
+      const latched = true; const tow = { reached: 1, of: 1 };
+      console.log(`   ${drop}`);
+      K = await kilnOf();
+      const st = await api.state(page);
+      console.log(`--- 7. ROCK ON THE PLANT: latched ${latched}, reached ${tow.reached}/${tow.of}, hull ${st.player.hull.toFixed(0)}; plant`, K.plant, 'powered', K.powered, 'socket', K.socket);
+      console.log('   comms:', st.comms.slice(-3));
+      await api.shot(page, 'kiln_rock_drop', 20);
+    }
+
+    }
+    // ---- 8. not in the memo: shoot the fins from above, then bait again
+    if (P('8')) {
+    {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      await setDay('day');
+      await place(0, 120);
+      const r = await page.evaluate(([ticks]) => {
+        const sf = window.__sf, w = sf.game.world, p = w.player;
+        const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+        const pad = w.pads.find(q => q.name === 'THE KILN'); const b = pad.body; const rad = pad.radiator;
+        let fired = 0;
+        for (let t = 0; t < ticks; t++) {
+          if (!p.alive || !rad.alive) break;
+          const c = Math.cos(b.spinAngle), s = Math.sin(b.spinAngle);
+          const rx = b.pos.x + rad.local.x * c - rad.local.y * s, ry = b.pos.y + rad.local.x * s + rad.local.y * c;
+          const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+          // hold altitude with short bursts, otherwise aim at the fins and fire (shots inherit our velocity; we hover, so aim straight)
+          const wantVx = b.vel.x, wantVy = b.vel.y;
+          const ax = (wantVx - p.vel.x) * 2 - gx, ay = (wantVy - p.vel.y) * 2 - gy;
+          const am = Math.hypot(ax, ay);
+          const need = (t % 720) >= 480; // four seconds aiming, two seconds climbing
+          const aim = Math.atan2(ry - p.pos.y, rx - p.pos.x);
+          const heading = need ? Math.atan2(ay, ax) : aim;
+          const err = wrap(heading - p.angle);
+          const fire = !need && Math.abs(err) < 0.08;
+          if (fire && p.fireCooldown <= 0) fired++;
+          sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: need && Math.abs(err) < 0.4 ? Math.min(1, am / p.stats.thrust) : 0, retro: 0, strafe: 0, fire, boost: false });
+          sf.step(1);
+        }
+        sf.controls(null);
+        return { radAlive: rad.alive, fired, hull: p.hull, alive: p.alive, t: w.time };
+      }, [120 * 40]);
+      console.log(`--- 8. FINS: radiator ${r.radAlive ? 'still up' : 'DESTROYED'} after ${r.fired} shots, hull ${r.hull.toFixed(0)}`);
+      const bait = await hover(0, 100, 40, 'on');
+      console.log('    bait after fins gone:', fmt(bait));
+    }
+
+    }
+    // ---- 9. the direct solution must still work: fly in and shoot the pad
+    if (P('9')) {
+    {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      await page.evaluate(() => window.__sf.buyAll());
+      await page.evaluate(() => window.__sf.weapon('mass'));
+      await place(0, 55);
+      const res = await page.evaluate(([ticks]) => {
+        const sf = window.__sf, w = sf.game.world, p = w.player;
+        const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+        const pad = w.pads.find(q => q.name === 'THE KILN');
+        const b = pad.body;
+        const hp0 = pad.enemyHealth;
+        for (let t = 0; t < ticks; t++) {
+          if (!p.alive || !pad.alive) break;
+          const rx = p.pos.x - b.pos.x, ry = p.pos.y - b.pos.y, r = Math.hypot(rx, ry);
+          const ux = rx / r, uy = ry / r;
+          const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+          const wantAlt = pad.height + 40;
+          const wantVr = (wantAlt - r) * 0.3;
+          const vr = (p.vel.x - b.vel.x) * ux + (p.vel.y - b.vel.y) * uy;
+          const ax = (ux * (wantVr - vr)) * 1.5 - gx, ay = (uy * (wantVr - vr)) * 1.5 - gy;
+          const am = Math.hypot(ax, ay);
+          const pa = pad.angle + b.spinAngle;
+          let tx = b.pos.x + Math.cos(pa) * pad.height, ty = b.pos.y + Math.sin(pa) * pad.height;
+          const sent = w.ships.filter(s => s.alive && s.kind === 'sentinel' && s.ai.home === pad);
+          if (sent.length) { tx = sent[0].pos.x; ty = sent[0].pos.y; }
+          const aim = Math.atan2(ty - p.pos.y, tx - p.pos.x);
+          const needThrust = am > 4;
+          const heading = needThrust ? Math.atan2(ay, ax) : aim;
+          const err = wrap(heading - p.angle);
+          sf.controls({ turn: Math.max(-1, Math.min(1, err * 4)), thrust: needThrust && Math.abs(err) < 0.4 ? Math.min(1, am / p.stats.thrust) : 0, retro: 0, strafe: 0, fire: !needThrust && Math.abs(err) < 0.15, boost: false });
+          sf.step(1);
+        }
+        sf.controls(null);
+        return { alive: p.alive, hull: p.hull, baseAlive: pad.alive, baseHp: pad.enemyHealth, hp0, sentinels: w.ships.filter(s => s.alive && s.kind === 'sentinel' && s.ai.home === pad).length, time: w.time };
+      }, [120 * 90]);
+      console.log(`--- 9. DIRECT ASSAULT (armoured, mass driver): ${res.alive ? 'ALIVE' : 'DEAD'} hull ${res.hull.toFixed(0)}, base ${res.baseAlive ? 'STANDS ' + res.baseHp.toFixed(0) + '/' + res.hp0 : 'DESTROYED'}, guns left ${res.sentinels}, t ${res.time.toFixed(0)}`);
+    }
+    }
+  },
+
+  // ------------------------------------------------------------------ the living system, unattended
+  // Park the ship and let the world run. Everything the sim logs is printed so that interactions nobody
+  // authored can be found: guns jamming in daylight, traffic shot down, contacts lost behind moons.
+  async living({ page }) {
+    await api.manual(page, true);
+    const seeds = (process.env.LIVING_SEEDS || '2024,4321').split(',').map(Number);
+    for (const seed of seeds) {
+      for (const where of ['mid', 'enemy']) {
+        await api.newGame(page, seed);
+        await api.launch(page);
+        await api.step(page, 2);
+        // park in a high, dark orbit around the world in question
+        const parked = await page.evaluate(([where]) => {
+          const sf = window.__sf, w = sf.game.world;
+          const kiln = w.pads.find(p => p.name === 'THE KILN');
+          const b = where === 'mid' ? kiln.body : w.enemyCore.body;
+          const r = b.radius * 4.2;
+          const a = Math.random() * Math.PI * 2;
+          const v = Math.sqrt(b.mass / r);
+          sf.teleport(b.pos.x + Math.cos(a) * r, b.pos.y + Math.sin(a) * r, b.vel.x - Math.sin(a) * v, b.vel.y + Math.cos(a) * v, a);
+          return { body: b.name, r };
+        }, [where]);
+        console.log(`=== seed ${seed}, parked ${parked.r.toFixed(0)} out from ${parked.body} (${where}) for 14 minutes`);
+        let lastLog = 0;
+        const counts = {};
+        for (let minute = 1; minute <= 14; minute++) {
+          await api.step(page, 120 * 60);
+          const snap = await page.evaluate(([since]) => {
+            const sf = window.__sf, w = sf.game.world, p = w.player;
+            const logs = w.log.filter(e => e.time >= since).map(e => ({ t: Math.round(e.time), kind: e.kind, text: e.text }));
+            const K = sf.bases();
+            return { time: w.time, logs, alive: p.alive, hull: p.hull, threat: w.threat, civs: w.ships.filter(s => s.alive && s.faction === 'civ').length, enemies: w.ships.filter(s => s.alive && s.faction === 'enemy' && s.kind !== 'sentinel').length, bases: K.map(b => `${b.name.replace('THE ', '').replace('BASE ', '')}:${b.powered ? 'on' : 'OFF'}/sun${b.sun.toFixed(1)}/${b.guns.map(g => (g.overheated ? 'J' : g.heat.toFixed(1)) + (g.target ? '*' : '')).join(',')}`), events: w.events.filter(e => !e.resolved && !e.failed).map(e => e.label), journal: w.journal.length, comms: w.comms.filter(c => c.time >= since).map(c => c.from + ': ' + c.text) };
+          }, [lastLog]);
+          lastLog = snap.time;
+          for (const l of snap.logs) counts[l.kind] = (counts[l.kind] || 0) + 1;
+          const notable = snap.logs.filter(l => l.kind !== 'rock-rest' && l.kind !== 'rock-fall');
+          console.log(`  ${String(minute).padStart(2)}m threat ${snap.threat.toFixed(1)} civs ${snap.civs} hostiles ${snap.enemies} | ${snap.bases.join(' ')} | ${snap.events.join('; ') || 'quiet'}`);
+          for (const l of notable) console.log(`      ${l.t}s ${l.kind}: ${l.text}`);
+          for (const c of snap.comms) if (/DOWN|GONE|SILENT|DESTROYED|CRACKED|LOST|BROKEN|STOPPED|RESUMED|MADE IT|REPELLED/.test(c)) console.log(`      comm: ${c}`);
+          if (!snap.alive) { console.log('      (the parked ship was destroyed; hull', snap.hull, ')'); break; }
+        }
+        console.log('  log counts:', JSON.stringify(counts));
+        const jn = await page.evaluate(() => window.__sf.journal());
+        console.log('  journal:', jn.map(e => `${e.t}s ${e.text}`));
+      }
+    }
   },
 
   async fault({ page }) {

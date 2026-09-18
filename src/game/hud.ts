@@ -8,7 +8,7 @@ import { TETHER_BREAK } from '../sim/tether';
 import { hubRadius, localAngle } from '../sim/stations';
 import { hasSensors } from '../sim/upgrades';
 import type { GameEvent, Ship, Station, World } from '../sim/world';
-import { terrainNormalAt, terrainRadiusAt } from '../sim/bodies';
+import { padWorldPos, terrainNormalAt, terrainRadiusAt } from '../sim/bodies';
 import type { Game } from './game';
 
 export interface NavTarget {
@@ -23,7 +23,7 @@ export function navPos(n: NavTarget): V2 {
   if (n.body) return n.body.pos;
   if (n.station) return n.station.pos;
   if (n.event) return n.event.pos;
-  if (n.pad) return { x: n.pad.body.pos.x + Math.cos(n.pad.angle) * n.pad.height, y: n.pad.body.pos.y + Math.sin(n.pad.angle) * n.pad.height };
+  if (n.pad) return padWorldPos(n.pad, 0);
   return { x: 0, y: 0 };
 }
 
@@ -58,6 +58,7 @@ export function nearestEnemy(w: World, range: number): Ship | null {
   let best: Ship | null = null, bd = range;
   for (const s of w.ships) {
     if (!s.alive || s.faction !== 'enemy' || s.docked) continue;
+    if (w.time - s.sensedAt > 0.3) continue;
     const d = Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y);
     if (d < bd) { bd = d; best = s; }
   }
@@ -164,6 +165,7 @@ export function drawFlightHud(g: Game): void {
   if (p.overheated) warn('WEAPON OVERHEATED', C.red, 12);
   if (w.flare.warned) warn(`SOLAR FLARE IN ${Math.ceil(w.flare.timer)}  ·  FIND SHADOW, LAND OR DOCK`, [1, 0.7, 0.2]);
   if (w.flare.active) warn(p.landed || p.docked ? 'FLARE  ·  SHELTERED' : 'FLARE  ·  RADIATION', [1, 0.6, 0.2]);
+  if (w.time - w.journalNoteAt < 6 && w.journalNew > 0) drawText(H, `J  ·  ${w.journalNew} NEW IN THE JOURNAL`, W / 2, Hh - 224 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.5 + 0.3 * Math.sin(t * 6), 'center');
 
   // ---------------- score line top-right
   drawText(H, `SCORE ${String(Math.floor(w.score)).padStart(7, '0')}   CR ${w.credits}   HULLS x${w.lives}`, rx, 18 * s, 11 * s, C.white[0], C.white[1], C.white[2], 0.85, 'right');
@@ -235,6 +237,7 @@ export function drawFlightHud(g: Game): void {
   }
   for (const sh of w.ships) {
     if (!sh.alive || sh === p || sh.docked) continue;
+    if (sh.faction === 'enemy' && w.time - sh.sensedAt > 0.3) continue; // the sensors do not have it
     const [x, y, inR] = toRadar(sh.pos.x, sh.pos.y);
     if (!inR) continue;
     const col = sh.faction === 'enemy' ? C.red : C.green;

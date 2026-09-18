@@ -3,7 +3,10 @@
 // dreadnoughts besiege stations, sentinels guard bases. Civilians travel and dock.
 import { angleDiff, clamp, TAU, type V2 } from '../engine/math';
 import { emptyControls, type Controls } from '../engine/input';
-import { maxTerrainRadius, terrainNormalAt, terrainRadiusAt, type Body, type Pad } from './bodies';
+import { maxTerrainRadius, padWorldAngle, padWorldPos, terrainNormalAt, terrainRadiusAt, type Body, type Pad } from './bodies';
+import { canSense, losBlocker } from './sense';
+import { coreOnCable, poweredAt } from './power';
+import { rotateVec, worldToBody } from './walls';
 import { fireWeapon, gravityAt, spawnPickup } from './physics';
 import { hubRadius, localAngle } from './stations';
 import { comm, createShip, makeWeapon, sfx, type AiState, type Faction, type Ship, type ShipKind, type Station, type World } from './world';
@@ -13,15 +16,15 @@ export function spawnAiShip(w: World, kind: ShipKind, faction: Faction, x: numbe
   s.ai = {
     mode, target: null, targetPos: null, timer: 0, fireTimer: 0, strafeDir: w.rng.sign(), carrying: null, home: null, homeBody,
     wantFire: false, wantSecondary: false, patrolAngle: w.rng.next() * TAU, route: [], routeIndex: 0, convoyLeader: null,
-    formationOffset: { x: 0, y: 0 }, fear: 0, memory: -1e9, groupId: 0, wave: 0,
+    formationOffset: { x: 0, y: 0 }, fear: 0, memory: -1e9, groupId: 0, wave: 0, lastSeen: -1e9, shotsInBurst: 0, heldFireAt: -1e9,
   };
   // per-kind weapons
   switch (kind) {
-    case 'wasp': s.weapon = { ...makeWeapon('lance'), cooldown: 0.55, damage: 7, speed: 85, life: 1.3 }; break;
-    case 'lancer': s.weapon = { ...makeWeapon('lance'), cooldown: 0.16, damage: 12, speed: 90, life: 1.6 }; break;
-    case 'reaver': s.weapon = { ...makeWeapon('lance'), cooldown: 1.0, damage: 16, speed: 70, life: 1.4 }; break;
-    case 'dreadnought': s.weapon = { ...makeWeapon('mass'), cooldown: 1.8, damage: 48, speed: 42, life: 6 }; s.secondary = { ...makeWeapon('lance'), cooldown: 1.1, damage: 14, speed: 80, life: 1.6 }; break;
-    case 'sentinel': s.weapon = { ...makeWeapon('lance'), cooldown: 1.4, damage: 6, speed: 68, life: 2.0, spread: 0.08 }; break;
+    case 'wasp': s.weapon = { ...makeWeapon('lance'), cooldown: 0.55, damage: 7, speed: 85, life: 1.3, heat: 0.16 }; break;
+    case 'lancer': s.weapon = { ...makeWeapon('lance'), cooldown: 0.16, damage: 12, speed: 90, life: 1.6, heat: 0.1 }; break;
+    case 'reaver': s.weapon = { ...makeWeapon('lance'), cooldown: 1.0, damage: 16, speed: 70, life: 1.4, heat: 0.12 }; break;
+    case 'dreadnought': s.weapon = { ...makeWeapon('mass'), cooldown: 1.8, damage: 48, speed: 42, life: 6, heat: 0.2 }; s.secondary = { ...makeWeapon('lance'), cooldown: 1.1, damage: 14, speed: 80, life: 1.6, heat: 0.08 }; break;
+    case 'sentinel': s.weapon = { ...makeWeapon('lance'), cooldown: 1.4, damage: 6, speed: 68, life: 2.0, spread: 0.08, heat: 0.2 }; break;
     case 'freighter': s.weapon = { ...makeWeapon('pulse'), cooldown: 0.5, damage: 5 }; break;
     default: break;
   }
@@ -39,12 +42,16 @@ export function spawnAiShip(w: World, kind: ShipKind, faction: Faction, x: numbe
 }
 
 /** Place a sentinel turret on an enemy base pad. */
-export function spawnSentinel(w: World, pad: Pad): Ship {
+export function spawnSentinel(w: World, pad: Pad, slot = 0): Ship {
   const b = pad.body;
-  const n = terrainNormalAt(b, pad.angle);
-  const x = b.pos.x + Math.cos(pad.angle) * (pad.height + 1.3), y = b.pos.y + Math.sin(pad.angle) * (pad.height + 1.3);
+  const wa = padWorldAngle(pad);
+  const n = terrainNormalAt(b, wa);
+  const base = padWorldPos(pad, 1.3);
+  const off = (slot - (pad.guns - 1) / 2) * 2.4;
+  const x = base.x - n.y * off, y = base.y + n.x * off;
   const s = spawnAiShip(w, 'sentinel', 'enemy', x, y, Math.atan2(n.y, n.x), 'guard', b);
-  s.landed = { body: b, pad, offset: { x: x - b.pos.x, y: y - b.pos.y }, angle: Math.atan2(n.y, n.x), normal: n };
+  const nl = b.rotates ? rotateVec(n, -b.spinAngle) : n;
+  s.landed = { body: b, pad, offset: worldToBody(b, x, y), angle: Math.atan2(nl.y, nl.x), normal: nl };
   s.ai!.home = pad;
   return s;
 }
@@ -108,21 +115,42 @@ function aimLead(s: Ship, t: Ship, speed: number): number {
   return Math.atan2(py, px);
 }
 
+/** Acquire a target through the ship's sensors: emissions, range and line of sight. */
 function findTarget(w: World, s: Ship, range: number): Ship | null {
+  if ((w.tick + s.id) % 6 !== 0) return null;
   const pl = w.player;
-  let best: Ship | null = null, bd = range;
+  let best: Ship | null = null, bd = Infinity;
   if (pl.alive && !pl.docked) {
     const d = Math.hypot(pl.pos.x - s.pos.x, pl.pos.y - s.pos.y);
-    if (d < bd) { best = pl; bd = d; }
-    // once shot at, remember the player for a while
+    // once shot at, remember the player for a while: being hit tells you where from
     if (s.ai && w.time - s.ai.memory < 8 && d < range * 1.8) { best = pl; bd = d; }
+    else if (d < bd && canSense(w, s.pos.x, s.pos.y, range, pl)) { best = pl; bd = d; }
   }
   for (const o of w.ships) {
     if (!o.alive || o.docked || o.faction !== 'civ' || o.landed) continue;
     const d = Math.hypot(o.pos.x - s.pos.x, o.pos.y - s.pos.y) * 1.3; // prefer the player slightly
-    if (d < bd) { best = o; bd = d; }
+    if (d < bd && canSense(w, s.pos.x, s.pos.y, range, o)) { best = o; bd = d; }
   }
+  if (best && s.ai) { s.ai.lastSeen = w.time; s.ai.targetPos = { x: best.pos.x, y: best.pos.y }; }
   return best;
+}
+
+/** Keep or lose an acquired target. Returns false when contact is lost (the ship goes to the last known position). */
+function keepContact(w: World, s: Ship, ai: AiState, range: number): boolean {
+  const t = ai.target;
+  if (!t) return false;
+  if ((w.tick + s.id) % 6 === 0) {
+    const shotAt = w.time - ai.memory < 8;
+    if (shotAt || canSense(w, s.pos.x, s.pos.y, range, t)) { ai.lastSeen = w.time; ai.targetPos = { x: t.pos.x, y: t.pos.y }; }
+    else if (w.time - ai.lastSeen > 3) {
+      const blocker = losBlocker(w, s.pos.x, s.pos.y, t.pos.x, t.pos.y);
+      w.log.push({ time: w.time, kind: 'contact-lost', text: `${s.name}|${blocker ?? 'THE DARK'}`, x: s.pos.x, y: s.pos.y, param: blocker ? 1 : 0 });
+      ai.target = null;
+      ai.mode = 'hunt';
+      return false;
+    }
+  }
+  return true;
 }
 
 export function updateAi(w: World, s: Ship, dt: number): Controls {
@@ -208,6 +236,7 @@ function waspAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
   }
   const t = ai.target;
   if (!t) { ai.mode = 'patrol'; return; }
+  if (!keepContact(w, s, ai, 320)) return;
   const dx = t.pos.x - s.pos.x, dy = t.pos.y - s.pos.y;
   const d = Math.hypot(dx, dy) || 1;
   const ux = dx / d, uy = dy / d;
@@ -266,6 +295,7 @@ function lancerAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
   }
   const t = ai.target;
   if (!t) { ai.mode = 'patrol'; return; }
+  if (!keepContact(w, s, ai, 300)) return;
   const dx = t.pos.x - s.pos.x, dy = t.pos.y - s.pos.y;
   const d = Math.hypot(dx, dy) || 1;
   const ux = dx / d, uy = dy / d;
@@ -293,7 +323,8 @@ function reaverAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
   const pl = w.player;
   if (pl.alive && !pl.docked) {
     const d = Math.hypot(pl.pos.x - s.pos.x, pl.pos.y - s.pos.y);
-    if (d < 60) {
+    if (d < 60 && (w.tick + s.id) % 6 === 0 && canSense(w, s.pos.x, s.pos.y, 60, pl)) ai.lastSeen = w.time;
+    if (d < 60 && w.time - ai.lastSeen < 0.5) {
       const aim = aimLead(s, pl, s.weapon.speed);
       if (Math.abs(angleDiff(s.angle, aim)) < 0.2) { ai.wantFire = true; ai.target = pl; }
     }
@@ -302,9 +333,11 @@ function reaverAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
     const b = pad.body;
     if (!pad.alive || pad.population <= 0) { ai.mode = 'escape'; return; }
     // come in high over the pad first, then straight down: never skim the terrain around it
-    const arc = Math.abs(angleDiff(Math.atan2(s.pos.y - b.pos.y, s.pos.x - b.pos.x), pad.angle)) * b.radius;
+    const pwa = padWorldAngle(pad);
+    const arc = Math.abs(angleDiff(Math.atan2(s.pos.y - b.pos.y, s.pos.x - b.pos.x), pwa)) * b.radius;
     const alt = arc > 18 ? 70 : 9;
-    const px = b.pos.x + Math.cos(pad.angle) * (pad.height + alt), py = b.pos.y + Math.sin(pad.angle) * (pad.height + alt);
+    const hp = padWorldPos(pad, alt);
+    const px = hp.x, py = hp.y;
     const dx = px - s.pos.x, dy = py - s.pos.y;
     const d = Math.hypot(dx, dy);
     // approach the hover point above the pad; slow down near it
@@ -425,9 +458,11 @@ function civAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
   const pad = dest as Pad;
   const b = pad.body;
   if (s.landed) { ai.timer -= 0; if (ai.timer < -20) s.alive = false; return; } // delivered: wait then vanish
-  const arcC = Math.abs(angleDiff(Math.atan2(s.pos.y - b.pos.y, s.pos.x - b.pos.x), pad.angle)) * b.radius;
+  const pwa = padWorldAngle(pad);
+  const arcC = Math.abs(angleDiff(Math.atan2(s.pos.y - b.pos.y, s.pos.x - b.pos.x), pwa)) * b.radius;
   const altC = arcC > 18 ? 70 : 20;
-  const hx = b.pos.x + Math.cos(pad.angle) * (pad.height + altC), hy = b.pos.y + Math.sin(pad.angle) * (pad.height + altC);
+  const hpos = padWorldPos(pad, altC);
+  const hx = hpos.x, hy = hpos.y;
   const dx = hx - s.pos.x, dy = hy - s.pos.y;
   const d = Math.hypot(dx, dy) || 1;
   if (d > 6 || altC > 20) {
@@ -438,7 +473,7 @@ function civAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
     return;
   }
   // descend slowly along the normal
-  const n = terrainNormalAt(b, pad.angle);
+  const n = terrainNormalAt(b, pwa);
   const want: V2 = { x: b.vel.x - n.x * 2.2, y: b.vel.y - n.y * 2.2 };
   velocityControl(w, s, want.x, want.y, 2.0, c);
   c.turn = clamp(angleDiff(s.angle, Math.atan2(n.y, n.x)) * 3, -1, 1);
@@ -451,7 +486,8 @@ function dreadAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void 
   // turrets: track the player within range
   if (pl.alive && !pl.docked) {
     const d = Math.hypot(pl.pos.x - s.pos.x, pl.pos.y - s.pos.y);
-    if (d < 120) { ai.target = pl; ai.wantSecondary = true; }
+    if (d < 120 && (w.tick + s.id) % 6 === 0 && canSense(w, s.pos.x, s.pos.y, 120, pl)) ai.lastSeen = w.time;
+    if (d < 120 && w.time - ai.lastSeen < 0.5) { ai.target = pl; ai.wantSecondary = true; }
   }
   if (st && st.alive) {
     const dx = st.pos.x - s.pos.x, dy = st.pos.y - s.pos.y;
@@ -492,25 +528,53 @@ function calledAi(w: World, s: Ship, ai: AiState, c: Controls): void {
 }
 
 function sentinelAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
-  const pl = w.player;
   const pad = ai.home as Pad | null;
   if (pad && !pad.alive) { s.alive = false; return; }
-  if (s.landed && s.landed.body === w.slices.cutBody && !w.slices.cutPowered) return; // dark
-  if (!pl.alive || pl.docked) return;
-  const dx = pl.pos.x - s.pos.x, dy = pl.pos.y - s.pos.y;
+  const b = s.landed?.body;
+  if (!b) return;
+  // no power: dark, deaf and still
+  if (!poweredAt(w, b, s.pos.x, s.pos.y)) { ai.target = null; return; }
+  // the base's mast sees far; without it the gun has only its own short sensor
+  const mast = pad ? pad.mast : null;
+  const range = mast && mast.alive ? 260 : 80;
+  if ((w.tick + s.id) % 6 === 0) {
+    let t = ai.target;
+    if (t && (!t.alive || t.docked || t.landed || !canSense(w, s.pos.x, s.pos.y, range, t))) { if (w.time - ai.lastSeen > 2) t = null; }
+    else if (t) ai.lastSeen = w.time;
+    if (!t) {
+      // nearest thing the sensors return: the player, or traffic
+      let bd = Infinity;
+      const pl = w.player;
+      if (pl.alive && !pl.docked && !pl.landed) { const d = Math.hypot(pl.pos.x - s.pos.x, pl.pos.y - s.pos.y); if (d < bd && canSense(w, s.pos.x, s.pos.y, range, pl)) { bd = d; t = pl; } }
+      for (const o of w.ships) {
+        if (!o.alive || o.docked || o.landed || o.faction !== 'civ') continue;
+        const d = Math.hypot(o.pos.x - s.pos.x, o.pos.y - s.pos.y) * 1.2;
+        if (d < bd && canSense(w, s.pos.x, s.pos.y, range, o)) { bd = d; t = o; }
+      }
+      if (t) { ai.lastSeen = w.time; ai.shotsInBurst = ai.target === t ? ai.shotsInBurst : 0; }
+    }
+    ai.target = t;
+  }
+  const t = ai.target;
+  if (!t) return;
+  const dx = t.pos.x - s.pos.x, dy = t.pos.y - s.pos.y;
   const d = Math.hypot(dx, dy);
-  if (d > 150) return;
   // rotate in place toward the lead point (sentinel stays landed; we rotate the landed angle)
-  const aim = aimLead(s, pl, s.weapon.speed);
+  const aim = aimLead(s, t, s.weapon.speed);
   const err = angleDiff(s.angle, aim);
   const rot = clamp(err, -s.stats.turnRate * dt, s.stats.turnRate * dt);
   if (s.landed) { s.landed.angle += rot; s.angle = s.landed.angle; }
-  // only fire when the target is above the horizon (outward side)
-  const b = s.landed?.body;
-  if (b) {
-    const n = terrainNormalAt(b, Math.atan2(s.pos.y - b.pos.y, s.pos.x - b.pos.x));
-    const above = (dx * n.x + dy * n.y) > -2;
-    if (Math.abs(err) < 0.12 && above && d < 130) { ai.wantFire = true; ai.target = pl; }
+  // something carrying the tide's own beat reads as friendly
+  if (coreOnCable(t)) {
+    if (w.time - ai.heldFireAt > 12 && Math.abs(err) < 0.3 && d < 130) { ai.heldFireAt = w.time; w.log.push({ time: w.time, kind: 'held-fire-core', text: pad ? pad.name : 'GUNS', x: s.pos.x, y: s.pos.y }); }
+    return;
+  }
+  if (Math.abs(err) < 0.12 && d < 130 && w.time - ai.lastSeen < 0.6 && !s.overheated) {
+    ai.wantFire = true;
+    if (ai.shotsInBurst >= 20 && pad && pad.radiator && pad.radiator.alive && w.time - ai.heldFireAt > 60) {
+      ai.heldFireAt = w.time;
+      w.log.push({ time: w.time, kind: 'night-burst', text: pad.name, x: s.pos.x, y: s.pos.y });
+    }
   }
   void c;
 }

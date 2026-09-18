@@ -23,6 +23,7 @@ const CONTROLS: [string, string][] = [
   ['RIGHT MOUSE', 'BOOST'],
   ['M', 'SYSTEM MAP / SET COURSE'],
   ['TAB', 'CYCLE COURSE: EVENTS, STATIONS'],
+  ['J', 'JOURNAL: WHAT YOU HAVE SEEN, IN YOUR OWN WORDS'],
   ['H', 'THIS SCREEN'],
   ['0', 'MUTE'],
   ['ESC', 'PAUSE / BACK'],
@@ -260,9 +261,10 @@ export function drawMap(g: Game): void {
     // pads as ticks around the body
     for (const pd of b.pads) {
       const pc = padColor(pd.kind, pd.alive);
-      const ax = bx + Math.cos(pd.angle) * (r + 3 * s), ay = by - Math.sin(pd.angle) * (r + 3 * s);
-      H.line2(ax, ay, ax + Math.cos(pd.angle) * 4 * s, ay - Math.sin(pd.angle) * 4 * s, pc[0], pc[1], pc[2], 0.9, 2);
-      if (g.mapZoom > 2.2) { drawText(H, pd.kind === 'colony' ? `${pd.name} (${pd.population})` : pd.name, ax + Math.cos(pd.angle) * 12 * s, ay - Math.sin(pd.angle) * 12 * s - 4 * s, 7 * s, pc[0], pc[1], pc[2], 0.85, 'center'); sels.push({ name: pd.name, x: ax, y: ay, nav: { name: pd.name, pad: pd }, col: pc }); }
+      const pa = pd.angle + (b.rotates ? b.spinAngle : 0);
+      const ax = bx + Math.cos(pa) * (r + 3 * s), ay = by - Math.sin(pa) * (r + 3 * s);
+      H.line2(ax, ay, ax + Math.cos(pa) * 4 * s, ay - Math.sin(pa) * 4 * s, pc[0], pc[1], pc[2], 0.9, 2);
+      if (g.mapZoom > 2.2) { drawText(H, pd.kind === 'colony' ? `${pd.name} (${pd.population})` : pd.name, ax + Math.cos(pa) * 12 * s, ay - Math.sin(pa) * 12 * s - 4 * s, 7 * s, pc[0], pc[1], pc[2], 0.85, 'center'); sels.push({ name: pd.name, x: ax, y: ay, nav: { name: pd.name, pad: pd }, col: pc }); }
     }
   }
   for (const st of w.stations) {
@@ -419,12 +421,47 @@ export function drawPause(g: Game): void {
   const s = g.dpr;
   dim(g, 0.5);
   drawText(H, 'PAUSED', W / 2, Hh * 0.42, 26 * s, C.amber[0], C.amber[1], C.amber[2], 0.95, 'center');
-  drawText(H, 'ESC: RESUME   ·   H: MANUAL   ·   M: MAP   ·   X: ABANDON PATROL', W / 2, Hh * 0.42 + 40 * s, 11 * s, C.white[0], C.white[1], C.white[2], 0.8, 'center');
+  drawText(H, 'ESC: RESUME   ·   H: MANUAL   ·   M: MAP   ·   J: JOURNAL   ·   X: ABANDON PATROL', W / 2, Hh * 0.42 + 40 * s, 11 * s, C.white[0], C.white[1], C.white[2], 0.8, 'center');
   const inp = g.input;
   if (inp.wasPressed('Escape') || inp.wasPressed('KeyP') || inp.wasPressed('GP9')) g.mode = 'flight';
   if (inp.wasPressed('KeyH')) { g.helpReturn = 'pause'; g.mode = 'help'; inp.consume('KeyH'); }
   if (inp.wasPressed('KeyM')) { g.mapReturn = 'pause'; g.mode = 'map'; inp.consume('KeyM'); }
+  if (inp.wasPressed('KeyJ')) { g.journalReturn = 'pause'; g.mode = 'journal'; g.world.journalNew = 0; inp.consume('KeyJ'); }
   if (inp.wasPressed('KeyX')) { g.world.gameOver = true; g.mode = 'gameover'; }
+}
+
+/** The journal: observations in the pilot's words, newest first. It concludes nothing. */
+export function drawJournal(g: Game): void {
+  const H = g.hudLines;
+  const W = g.camera.viewportW, Hh = g.camera.viewportH;
+  const s = g.dpr;
+  const w = g.world;
+  dim(g, 0.75);
+  drawText(H, 'JOURNAL', W / 2, 40 * s, 22 * s, C.amber[0], C.amber[1], C.amber[2], 0.95, 'center');
+  const entries = w.journal.slice().reverse();
+  let y = 90 * s;
+  if (!entries.length) drawText(H, 'NOTHING WORTH WRITING DOWN YET.', W / 2, y, 11 * s, C.dim[0], C.dim[1], C.dim[2], 0.85, 'center');
+  const x0 = Math.max(24 * s, W / 2 - 420 * s), x1 = x0 + 70 * s;
+  const maxW = W - x1 - 24 * s;
+  for (const e of entries) {
+    if (y > Hh - 70 * s) { drawText(H, '...', x1, y, 10 * s, C.dim[0], C.dim[1], C.dim[2], 0.7); break; }
+    const mins = Math.floor(e.time / 60), secs = Math.floor(e.time % 60);
+    drawText(H, `${mins}:${String(secs).padStart(2, '0')}`, x0, y, 9 * s, C.cyan[0], C.cyan[1], C.cyan[2], 0.7);
+    // wrap long lines by words
+    const words = e.text.split(' ');
+    let line = '';
+    const lines: string[] = [];
+    for (const wd of words) {
+      const test = line ? line + ' ' + wd : wd;
+      if (textWidth(test, 10 * s) > maxW && line) { lines.push(line); line = wd; } else line = test;
+    }
+    if (line) lines.push(line);
+    for (const l of lines) { drawText(H, l, x1, y, 10 * s, C.white[0], C.white[1], C.white[2], 0.9); y += 14 * s; }
+    y += 8 * s;
+  }
+  drawText(H, 'ESC OR J TO RETURN', W / 2, Hh - 40 * s, 11 * s, 1, 1, 1, 0.5 + 0.5 * Math.sin(performance.now() / 250), 'center');
+  const inp = g.input;
+  if (inp.wasPressed('Escape') || inp.wasPressed('KeyJ') || inp.wasPressed('Enter') || inp.wasPressed('GP1') || inp.wasPressed('GP9')) { g.mode = g.journalReturn; inp.consume('KeyJ'); inp.consume('Escape'); }
 }
 
 export function padLabel(p: Pad): string { return p.name; }

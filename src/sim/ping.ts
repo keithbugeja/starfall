@@ -2,7 +2,8 @@
 // interpret: terrain edges flash as the ring sweeps them, walls of hidden hollows flash, dense
 // objects blink, hollow bodies answer with an echo ring, and some things react in their own way.
 // It labels nothing.
-import type { World } from './world';
+import type { Ship, World } from './world';
+import { note } from './journal';
 
 export interface Ping {
   x: number;
@@ -20,8 +21,9 @@ export const PING_COOLDOWN = 1.6;
 export const PING_SPEED = 150;
 export const PING_RANGE = 460;
 
-export function emitPing(w: World, x: number, y: number, echo = false, maxR = PING_RANGE): void {
+export function emitPing(w: World, x: number, y: number, echo = false, maxR = PING_RANGE, by: Ship | null = null): void {
   w.pings.push({ x, y, t0: w.time, r: 0, speed: echo ? 90 : PING_SPEED, maxR, echo, hit: new Set(), bodiesHit: new Set() });
+  if (by) by.lastPingTime = w.time;
   if (!echo) { w.audioEvents.push({ kind: 'ping', pos: null, volume: 0.7, param: 0 }); }
   else w.audioEvents.push({ kind: 'echo', pos: { x, y }, volume: 0.9, param: 1 });
 }
@@ -75,6 +77,7 @@ export function updatePings(w: World, dt: number): void {
           // a hollow thing rings back
           w.pings.push({ x: b.pos.x, y: b.pos.y, t0: t + 0.35, r: -0.35 * 90, speed: 90, maxR: Math.max(120, b.maxRadius * 6), echo: true, hit: new Set(), bodiesHit: new Set() });
           w.audioEvents.push({ kind: 'echo', pos: b.pos, volume: 0.9, param: 1 });
+          note(w, 'echo-' + b.id, `THE ROCK OUT PAST THE BELT ANSWERED MY SCAN WITH A RING OF ITS OWN. THE OTHERS DID NOT.`);
         }
       }
     }

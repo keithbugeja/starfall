@@ -4,6 +4,7 @@ import type { Body } from './bodies';
 import { damageShip } from './physics';
 import { release } from './tether';
 import { podDelivered } from './slices';
+import { canSense } from './sense';
 import { comm, sfx, type Ship, type Station, type World } from './world';
 
 export const RING_SEGMENTS = 24;
@@ -84,7 +85,7 @@ export function updateStations(w: World, dt: number): void {
       for (const s of w.ships) {
         if (!s.alive || s.faction !== 'enemy' || s.landed) continue;
         const d = Math.hypot(s.pos.x - st.pos.x, s.pos.y - st.pos.y);
-        if (d < bd) { bd = d; best = s; }
+        if (d < bd && canSense(w, st.pos.x, st.pos.y, 100, s)) { bd = d; best = s; }
       }
       if (best) {
         const dx = best.pos.x - st.pos.x, dy = best.pos.y - st.pos.y;

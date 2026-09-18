@@ -11,6 +11,9 @@ import { attach, release } from './sim/tether';
 import { emitPing } from './sim/ping';
 import { bodyToWorld } from './sim/walls';
 import { padWorldPos } from './sim/bodies';
+import { poweredAt, socketWorld } from './sim/power';
+import { structurePos } from './sim/structures';
+import { canSense, losBlocker, signature, sunlight } from './sim/sense';
 import { createAsteroid, gravityAt, predictTrajectory, spawnPickup, type Trajectory } from './sim/physics';
 import type { PickupKind } from './sim/world';
 
@@ -90,13 +93,63 @@ const harness = {
   fireSecondaryNow(): void { game.input.overridePressed.add('KeyX'); },
   raw(): unknown { return game.world; },
   tether(): boolean { const p = game.world.player; if (p.tether) { release(game.world, p); return false; } return attach(game.world, p); },
-  ping(): void { const p = game.world.player; emitPing(game.world, p.pos.x, p.pos.y); },
+  ping(): void { const p = game.world.player; emitPing(game.world, p.pos.x, p.pos.y, false, undefined, p); },
   transfer(on: boolean): void { game.harnessTransfer = on; },
   spawnPilgrim(): void { game.world.slices.pilgrimSpawnAt = 0; },
   spawnCrate(dx: number, dy: number, kind = 'salvage', vx = 0, vy = 0): void { const p = game.world.player; spawnPickup(game.world, kind as PickupKind, p.pos.x + dx, p.pos.y + dy, p.vel.x + vx, p.vel.y + vy, 45); },
   spawnRock(dx: number, dy: number, size = 2): void { const p = game.world.player; createAsteroid(game.world, p.pos.x + dx, p.pos.y + dy, p.vel.x, p.vel.y, size, -1); },
+  spawnRockAt(x: number, y: number, vx: number, vy: number, size = 2): number { const a = createAsteroid(game.world, x, y, vx, vy, size, -1); return a.id; },
+  forceFlare(): void { const w = game.world; w.flare.warned = true; w.flare.timer = 2; w.flare.active = false; w.flare.intensity = 0; },
+  sun(x: number, y: number, nx = 0, ny = 0): number { return sunlight(game.world, x, y, nx || ny ? { x: nx, y: ny } : null); },
+  los(ax: number, ay: number, bx: number, by: number): string | null { return losBlocker(game.world, ax, ay, bx, by); },
+  /** Which enemies currently sense the player, and which the player senses. */
+  sense(): unknown {
+    const w = game.world, p = w.player;
+    const rows: Record<string, unknown>[] = w.ships.filter(s => s.alive && s !== p).map(s => {
+      const range = s.kind === 'sentinel' ? ((s.ai?.home as import('./sim/bodies').Pad | null)?.mast?.alive ? 260 : 80) : s.kind === 'wasp' ? 320 : s.kind === 'lancer' ? 300 : 120;
+      return { kind: s.kind, id: s.id, x: s.pos.x, y: s.pos.y, d: Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y), seesPlayer: canSense(w, s.pos.x, s.pos.y, range, p), blocker: losBlocker(w, s.pos.x, s.pos.y, p.pos.x, p.pos.y), playerSees: w.time - s.sensedAt < 0.3, target: s.ai?.target ? s.ai.target.name : null, mode: s.ai?.mode ?? null, heat: s.heat, overheated: s.overheated, powered: s.landed ? poweredAt(w, s.landed.body, s.pos.x, s.pos.y) : null };
+    });
+    rows.push({ kind: 'player', id: p.id, x: p.pos.x, y: p.pos.y, heat: p.heat, overheated: p.overheated, signature: signature(w, p), thrusting: p.thrusting });
+    return rows;
+  },
+  /** Installations: every enemy base with its structures, power and guns. */
+  bases(): unknown {
+    const w = game.world;
+    return w.pads.filter(p => p.kind === 'enemybase' || p.kind === 'core').map(pad => {
+      const pp = padWorldPos(pad, 2);
+      const guns = w.ships.filter(s => s.alive && s.kind === 'sentinel' && s.ai?.home === pad);
+      const str = (s: import('./sim/structures').Structure | null) => s ? { alive: s.alive, integrity: s.integrity, ...structurePos(s), hot: s.hot } : null;
+      const src = w.power.find(q => q.plant === pad.plant && pad.plant) ?? w.power.find(q => q.body === pad.body && q.range === Infinity) ?? null;
+      const n = { x: pp.x - pad.body.pos.x, y: pp.y - pad.body.pos.y }; const nl = Math.hypot(n.x, n.y) || 1;
+      return { name: pad.name, body: pad.body.name, alive: pad.alive, hp: pad.enemyHealth, x: pp.x, y: pp.y, angle: Math.atan2(n.y, n.x), powered: poweredAt(w, pad.body, pp.x, pp.y), sun: sunlight(w, pp.x, pp.y, { x: n.x / nl, y: n.y / nl }), plant: str(pad.plant), radiator: str(pad.radiator), mast: str(pad.mast),
+        socket: src ? { ...socketWorld(src), powered: src.powered, broken: src.broken, core: src.core ? src.core.name : null, range: src.range } : null,
+        guns: guns.map(g => ({ id: g.id, x: g.pos.x, y: g.pos.y, heat: g.heat, overheated: g.overheated, target: g.ai?.target ? g.ai.target.name : null, shots: g.ai?.shotsInBurst ?? 0, hull: g.hull })) };
+    });
+  },
+  cores(): unknown { return game.world.pickups.filter(k => k.alive && k.role === 'core').map(k => ({ name: k.name, origin: k.origin, x: k.pos.x, y: k.pos.y, tethered: !!k.tetheredBy })); },
+  journal(): unknown { return game.world.journal.map(e => ({ t: Math.round(e.time), key: e.key, text: e.text })); },
+  log(since = 0): unknown { return game.world.log.filter(e => e.time >= since).map(e => ({ t: Math.round(e.time), kind: e.kind, text: e.text, param: e.param ?? 0 })); },
+  /** Test tool: turn a world to a given rotation, carrying everything resting on it (the sim only ever turns it slowly). */
+  spinTo(name: string, spinAngle: number): void {
+    const w = game.world;
+    const b = w.bodies.find(x => x.name === name);
+    if (!b || !b.rotates) return;
+    const delta = spinAngle - b.spinAngle;
+    const c = Math.cos(delta), s = Math.sin(delta);
+    const rot = (o: { pos: { x: number; y: number }; vel: { x: number; y: number } }) => {
+      const dx = o.pos.x - b.pos.x, dy = o.pos.y - b.pos.y;
+      o.pos.x = b.pos.x + dx * c - dy * s; o.pos.y = b.pos.y + dx * s + dy * c;
+      const vx = o.vel.x - b.vel.x, vy = o.vel.y - b.vel.y;
+      o.vel.x = b.vel.x + vx * c - vy * s; o.vel.y = b.vel.y + vx * s + vy * c;
+    };
+    for (const k of w.pickups) if (k.alive && !k.carriedBy && Math.hypot(k.pos.x - b.pos.x, k.pos.y - b.pos.y) < b.maxRadius + 4) rot(k);
+    for (const a of w.asteroids) if (a.alive && Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) < b.maxRadius + a.radius + 2) rot(a);
+    b.spinAngle = spinAngle;
+  },
+  bodySpin(name: string): unknown { const b = game.world.bodies.find(x => x.name === name); return b ? { spin: b.spin, spinAngle: b.spinAngle, rotates: b.rotates } : null; },
   setVel(vx: number, vy: number): void { const p = game.world.player; p.vel.x = vx; p.vel.y = vy; },
   refuel(): void { const p = game.world.player; p.fuel = p.fuelMax; },
+  heal(): void { const p = game.world.player; p.hull = p.hullMax; },
   gravity(x: number, y: number): [number, number] { const g = { x: 0, y: 0 }; gravityAt(game.world, x, y, g); return [g.x, g.y]; },
   audio(): string[] { return game.audioLog.splice(0); },
   slice(): unknown {
@@ -131,12 +184,14 @@ const harness = {
         x: p.pos.x, y: p.pos.y, vx: p.vel.x, vy: p.vel.y, angle: p.angle, hull: p.hull, fuel: p.fuel,
         alive: p.alive, landed: p.landed ? { body: p.landed.body.name, pad: p.landed.pad?.name ?? null } : null,
         docked: p.docked ? p.docked.name : null, speed: Math.hypot(p.vel.x, p.vel.y),
-        cargo: p.cargo, heat: p.heat, lastDamageSource: p.lastDamageSource, tethered: !!p.tether, stunned: p.stunned,
+        cargo: p.cargo, heat: p.heat, overheated: p.overheated, lastDamageSource: p.lastDamageSource, tethered: !!p.tether, stunned: p.stunned,
       },
       bodies: w.bodies.map(b => ({ name: b.name, kind: b.kind, x: b.pos.x, y: b.pos.y, r: b.radius, pads: b.pads.map(pd => ({ name: pd.name, kind: pd.kind, angle: pd.angle, alive: pd.alive, pop: pd.population })) })),
       stations: w.stations.map(s => ({ name: s.name, x: s.pos.x, y: s.pos.y, vx: s.vel.x, vy: s.vel.y, angle: s.angle, spin: s.spin, r: s.radius, alive: s.alive })),
-      ships: w.ships.filter(s => s.alive).map(s => ({ kind: s.kind, faction: s.faction, x: s.pos.x, y: s.pos.y, vx: s.vel.x, vy: s.vel.y, hull: s.hull, mode: s.ai?.mode ?? null, wave: s.ai?.wave ?? 0, carrying: !!s.ai?.carrying })),
+      ships: w.ships.filter(s => s.alive).map(s => ({ kind: s.kind, faction: s.faction, x: s.pos.x, y: s.pos.y, vx: s.vel.x, vy: s.vel.y, hull: s.hull, mode: s.ai?.mode ?? null, wave: s.ai?.wave ?? 0, carrying: !!s.ai?.carrying, heat: s.heat, overheated: s.overheated, sensed: w.time - s.sensedAt < 0.3 })),
       asteroids: w.asteroids.length,
+      journal: w.journal.length,
+      structures: w.structures.filter(s => s.alive).length,
       projectiles: w.projectiles.length,
       pickups: w.pickups.filter(p => p.alive).map(p => ({ kind: p.kind, name: p.name, x: p.pos.x, y: p.pos.y, vx: p.vel.x, vy: p.vel.y, tethered: !!p.tetheredBy })),
       events: w.events.map(e => ({ kind: e.kind, label: e.label, timer: e.timer, resolved: e.resolved, failed: e.failed, phase: e.phase })),

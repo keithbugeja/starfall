@@ -2,7 +2,8 @@
 // trajectory prediction. Everything lives in the sim plane.
 import { angleDiff, clamp, damp, TAU, v2len, wrapAngle, type V2 } from '../engine/math';
 import type { Controls } from '../engine/input';
-import { gravityFrom, maxTerrainRadius, surfaceVelocity, terrainNormalAt, terrainRadiusAt, terrainSegmentAt, type Body, type Pad } from './bodies';
+import { gravityFrom, maxTerrainRadius, padWorldAngle, padWorldPos, surfaceVelocity, terrainNormalAt, terrainRadiusAt, terrainSegmentAt, type Body, type Pad } from './bodies';
+import { ambientHeat, coolingRate, sunlight } from './sense';
 import { bodyToWorld, circleVsFissure, fissureAt, rotateVec, segmentVsFissure, worldToBody, type Fissure } from './walls';
 import { attachPickup, release } from './tether';
 import { comm, sfx, type Asteroid, type Pickup, type Projectile, type Ship, type World } from './world';
@@ -42,6 +43,7 @@ export function stepShip(w: World, s: Ship, c: Controls, dt: number): void {
   const hasFuel = s.fuel > 0;
   const massInv = 1 / s.massMul;
 
+  updateHeat(w, s, dt);
   if (s.landed) {
     const L = s.landed;
     const b = L.body;
@@ -139,11 +141,30 @@ export function stepShip(w: World, s: Ship, c: Controls, dt: number): void {
     damageShip(w, s, 7 * w.flare.intensity / st.heatResist * dt, 'none', 'flare');
   }
   if (s.invuln > 0) s.invuln -= dt;
-  s.heat = Math.max(0, s.heat - dt * 0.35);
-  if (s.overheated && s.heat < 0.3) s.overheated = false;
   void gmag;
   resolveTerrain(w, s, dt);
   outOfBounds(w, s);
+}
+
+/** Weapons and systems heat: gains from firing and the environment, losses through radiators. */
+function updateHeat(w: World, s: Ship, dt: number): void {
+  const before = s.heat;
+  s.heat = clamp(s.heat + (ambientHeat(w, s) - coolingRate(w, s)) * dt, 0, 1);
+  if (s.heat >= 1 && !s.overheated && before < 1) overheat(w, s);
+  if (s.overheated && s.heat < 0.3) s.overheated = false;
+}
+
+function overheat(w: World, s: Ship): void {
+  s.overheated = true; s.heat = 1;
+  sfx(w, 'overheat', s.pos, s === w.player ? 0.8 : 0.4);
+  if (s.kind === 'sentinel' && s.ai && s.landed) {
+    const pad = s.ai.home as Pad | null;
+    const rad = pad?.radiator;
+    let sun = 1;
+    if (rad && rad.alive) { const rp = bodyToWorld(rad.body, rad.local); sun = sunlight(w, rp.x, rp.y, rad.body.rotates ? rotateVec(rad.normalLocal, rad.body.spinAngle) : rad.normalLocal); }
+    w.log.push({ time: w.time, kind: 'overheat', text: pad ? pad.name : 'GUNS', x: s.pos.x, y: s.pos.y, param: sun });
+    s.ai.shotsInBurst = 0;
+  }
 }
 
 /** True if the point is within a planet's shadow (star light blocked). */
@@ -349,6 +370,10 @@ export function killShip(w: World, s: Ship, source: DamageSource): void {
     w.bounties += Math.round(s.bounty * 0.5);
     if (s.kind === 'dreadnought') comm(w, 'CONTROL', 'DREADNOUGHT DESTROYED. OUTSTANDING, PILOT.', [1, 0.9, 0.5], 1);
   }
+  if (s.faction === 'civ' && source === 'weapon') {
+    const killer = w.ships.find(o => o.id === s.lastHitOwner);
+    if (killer && killer.kind === 'sentinel' && killer.ai && killer.ai.home) w.log.push({ time: w.time, kind: 'civ-shot', text: `${s.name}|${(killer.ai.home as Pad).name}`, x: s.pos.x, y: s.pos.y });
+  }
   if (s.faction === 'civ' && s.kind === 'freighter') {
     // drop cargo
     for (let i = 0; i < 3; i++) spawnPickup(w, 'salvage', s.pos.x + (w.rng.next() - 0.5) * 3, s.pos.y + (w.rng.next() - 0.5) * 3, s.vel.x + (w.rng.next() - 0.5) * 6, s.vel.y + (w.rng.next() - 0.5) * 6, 40);
@@ -369,6 +394,7 @@ export function spawnPickup(w: World, kind: Pickup['kind'], x: number, y: number
     fragile: kind === 'pod', home, moduleId: name, name, spin: (w.rng.next() - 0.5) * 3,
     mass: kind === 'pod' ? 0.5 : kind === 'wreck' ? 2.5 : kind === 'module' ? 0.4 : kind === 'prop' ? 0.7 : kind === 'log' ? 0.2 : 0.3,
     tetherable: true, tetheredBy: null, flashUntil: -1e9, glow: 0, socketBody: null, socketLocal: null, beacon: false, indestructible: kind === 'prop' || kind === 'log',
+    role: '', origin: '',
   };
   w.pickups.push(p);
   return p;
@@ -430,7 +456,7 @@ export function stepProjectiles(w: World, dt: number): void {
           if (p.faction === 'player') {
             for (const pad of b.pads) {
               if (!pad.alive || (pad.kind !== 'enemybase' && pad.kind !== 'core')) continue;
-              const arc = Math.abs(angleDiff(pad.angle, ang)) * b.radius;
+              const arc = Math.abs(angleDiff(padWorldAngle(pad), ang)) * b.radius;
               if (arc < pad.halfWidth * 1.6) { damageBase(w, pad, p.damage); w.explosions.push({ pos: { x: p.pos.x, y: p.pos.y }, time: w.time, size: 0.6, color: [1, 0.4, 0.3] }); }
             }
           }
@@ -496,20 +522,40 @@ export function stepAsteroids(w: World, dt: number): void {
           continue;
         }
       }
-      const surf = b.kind === 'star' ? b.radius : terrainRadiusAt(b, Math.atan2(dy, dx));
+      const ang = Math.atan2(dy, dx);
+      const surf = b.kind === 'star' ? b.radius : terrainRadiusAt(b, ang);
       if (dist < surf + a.radius * 0.6) {
-        a.alive = false;
-        if (b.kind !== 'star') {
+        if (b.kind === 'star') { a.alive = false; break; }
+        const n = terrainNormalAt(b, ang);
+        const sv = surfaceVelocity(b, a.pos.x, a.pos.y);
+        const rvx = a.vel.x - sv.x, rvy = a.vel.y - sv.y;
+        const vn = rvx * n.x + rvy * n.y;
+        if (a.rogue || -vn > 7 || b.kind === 'gas') {
+          // shatters on impact
+          a.alive = false;
+          w.log.push({ time: w.time, kind: 'rock-fall', text: b.name, x: a.pos.x, y: a.pos.y, param: a.size });
           w.explosions.push({ pos: { x: a.pos.x, y: a.pos.y }, time: w.time, size: 0.6 + a.size * 0.5, color: [1, 0.75, 0.4] });
           sfx(w, 'impact', a.pos, 0.6, 12);
           // meteor strike on a pad?
-          const ang = Math.atan2(dy, dx);
           for (const p of b.pads) {
-            const d = Math.abs(angleDiff(p.angle, ang)) * b.radius;
+            const d = Math.abs(angleDiff(padWorldAngle(p), ang)) * b.radius;
             if (d < p.halfWidth + a.radius * 2 && p.alive && p.kind !== 'enemybase' && p.kind !== 'core') {
               padDamaged(w, p, a.rogue ? 45 : 4 * a.size);
             }
           }
+          break;
+        }
+        // a slow rock stays where it falls
+        const pen = surf + a.radius * 0.6 - dist;
+        a.pos.x += n.x * pen; a.pos.y += n.y * pen;
+        if (vn < 0) {
+          a.vel.x = sv.x + (rvx - vn * n.x) * 0.6 - vn * 0.15 * n.x;
+          a.vel.y = sv.y + (rvy - vn * n.y) * 0.6 - vn * 0.15 * n.y;
+          a.spinRate *= 0.8;
+        }
+        if (!a.rested && Math.hypot(a.vel.x - sv.x, a.vel.y - sv.y) < 1.2) {
+          a.rested = true;
+          w.log.push({ time: w.time, kind: 'rock-rest', text: b.name, x: a.pos.x, y: a.pos.y, param: a.handled ? 1 : 0 });
         }
         break;
       }
@@ -524,7 +570,8 @@ export function damageBase(w: World, pad: Pad, amount: number): void {
   if (pad.enemyHealth <= 0) {
     pad.alive = false;
     w.stats.basesDestroyed++;
-    const px = pad.body.pos.x + Math.cos(pad.angle) * (pad.height + 2), py = pad.body.pos.y + Math.sin(pad.angle) * (pad.height + 2);
+    const pp = padWorldPos(pad, 2);
+    const px = pp.x, py = pp.y;
     w.explosions.push({ pos: { x: px, y: py }, time: w.time, size: 4, color: [1, 0.4, 0.3] });
     sfx(w, 'bigboom', { x: px, y: py }, 1, 5);
     if (pad.kind === 'core') {
@@ -548,7 +595,7 @@ export function padDamaged(w: World, p: Pad, amount: number): void {
     if (p.integrity <= 0) {
       p.alive = false;
       p.integrity = 0;
-      w.explosions.push({ pos: { x: p.body.pos.x + Math.cos(p.angle) * (p.height + 2), y: p.body.pos.y + Math.sin(p.angle) * (p.height + 2) }, time: w.time, size: 3, color: [1, 0.5, 0.3] });
+      w.explosions.push({ pos: padWorldPos(p, 2), time: w.time, size: 3, color: [1, 0.5, 0.3] });
       comm(w, p.name, `${p.name} HAS GONE SILENT.`, [1, 0.4, 0.3], 3, p.body.pos);
       w.lost += p.population;
       p.population = 0;
@@ -609,7 +656,7 @@ export function stepPickups(w: World, dt: number): void {
             if (p.kind === 'pod') { w.lost++; comm(w, 'CONTROL', 'POD LOST ON IMPACT.', [1, 0.4, 0.3], 2, p.pos); }
           } else if (p.kind === 'pod' && p.home && p.home.body === b) {
             // pod came home: it re-enters the colony
-            const d = Math.abs(angleDiff(p.home.angle, ang)) * b.radius;
+            const d = Math.abs(angleDiff(padWorldAngle(p.home), ang)) * b.radius;
             if (d < p.home.halfWidth * 3) {
               p.alive = false;
               p.home.population += 1;
@@ -681,6 +728,7 @@ export function collide(w: World, dt: number): void {
       if (p.faction === 'civ' && s.faction === 'player') continue;
       if (s.id === p.owner) continue;
       if (segCircle(p.prevPos.x, p.prevPos.y, p.pos.x, p.pos.y, s.pos.x, s.pos.y, s.radius + p.radius)) {
+        s.lastHitOwner = p.owner;
         damageShip(w, s, p.damage, p.faction, 'weapon');
         if (s.ai) s.ai.memory = w.time;
         w.explosions.push({ pos: { x: p.pos.x, y: p.pos.y }, time: w.time, size: 0.35, color: p.color });
@@ -946,7 +994,7 @@ export function createAsteroid(w: World, x: number, y: number, vx: number, vy: n
   const a: Asteroid = {
     id: w.nextId++, pos: { x, y }, vel: { x: vx, y: vy }, radius: r, hp: size === 3 ? 60 : size === 2 ? 30 : 12,
     variant: w.rng.int(1000), spinAxis: [ax / l, ay / l, az / l], spinRate: (w.rng.next() - 0.5) * 1.5, spinAngle: w.rng.next() * TAU,
-    size, ore: size, rich: false, field, alive: true, rogue: false, killedBy: 'none', flashUntil: -1e9,
+    size, ore: size, rich: false, field, alive: true, rogue: false, killedBy: 'none', flashUntil: -1e9, rested: false, handled: false,
   };
   w.asteroids.push(a);
   return a;
@@ -967,10 +1015,10 @@ export function fireWeapon(w: World, s: Ship, weapon: import('./world').Weapon, 
   if (weapon.ammo === 0) return false;
   s.fireCooldown = weapon.cooldown;
   if (weapon.ammo > 0) weapon.ammo--;
-  if (s === w.player) {
-    s.heat += weapon.heat;
-    if (s.heat >= 1) { s.overheated = true; s.heat = 1; sfx(w, 'overheat', s.pos, 0.8); }
-  }
+  s.lastFireTime = w.time;
+  s.heat += weapon.heat;
+  if (s.heat >= 1 && !s.overheated) overheat(w, s);
+  if (s.ai) s.ai.shotsInBurst++;
   const color = projectileColor(weapon.kind, s.faction);
   for (let i = 0; i < weapon.count; i++) {
     const spread = weapon.count > 1 ? (i / (weapon.count - 1) - 0.5) * weapon.spread * 2 : (w.rng.next() - 0.5) * weapon.spread * 2;

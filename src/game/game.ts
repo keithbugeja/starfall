@@ -9,7 +9,10 @@ import { angleDiff, clamp, damp, hashString, lerp, mat4Ortho, mat4TRS, Rng, TAU,
 import { MeshRenderer, type GpuMesh } from '../engine/mesh';
 import { ParticleSystem, StaticPoints } from '../engine/particles';
 import { PostPipeline } from '../engine/post';
-import { buildAsteroidMesh, buildPickupMesh, buildPlanetMesh, buildShipMesh, buildStarMesh, buildStationMesh } from '../gen/meshes';
+import { buildAsteroidMesh, buildPickupMesh, buildPlanetMesh, buildShipMesh, buildStarMesh, buildStationMesh, buildStructureMesh } from '../gen/meshes';
+import { poweredAt, socketWorld } from '../sim/power';
+import { structureNormal, structurePos } from '../sim/structures';
+import { sunlight } from '../sim/sense';
 import { generateSystem } from '../gen/system';
 import { maxTerrainRadius, padWorldAngle, padWorldPos, terrainNormalAt, terrainRadiusAt, type Body } from '../sim/bodies';
 import { gravityAt, LAND_VN, predictTrajectory, type Trajectory } from '../sim/physics';
@@ -22,11 +25,11 @@ import { undock } from '../sim/stations';
 import { applyUpgrades } from '../sim/upgrades';
 import { comm, sfx, SIM_DT, type Ship, type ShipKind, type World } from '../sim/world';
 import { drawFlightHud, navPos, type NavTarget } from './hud';
-import { drawDeath, drawDocked, drawGameOver, drawHelp, drawMap, drawPause, drawTitle } from './ui';
+import { drawDeath, drawDocked, drawGameOver, drawHelp, drawJournal, drawMap, drawPause, drawTitle } from './ui';
 
 interface ExplosionFx { x: number; y: number; t0: number; size: number; color: number[]; }
 
-export type GameMode = 'title' | 'flight' | 'docked' | 'map' | 'help' | 'gameover' | 'pause';
+export type GameMode = 'title' | 'flight' | 'docked' | 'map' | 'help' | 'gameover' | 'pause' | 'journal';
 
 export class Game {
   gl: WebGL2RenderingContext;
@@ -48,6 +51,7 @@ export class Game {
   private asteroidMeshesSmall: GpuMesh[] = [];
   private shipMeshes = new Map<ShipKind, GpuMesh>();
   private pickupMeshes = new Map<string, GpuMesh>();
+  private structureMeshes = new Map<string, GpuMesh>();
   private stationMeshes = new Map<number, GpuMesh>();
   private starfield!: StaticPoints;
   private accumulator = 0;
@@ -69,6 +73,7 @@ export class Game {
   menuIndex = 0;
   helpReturn: GameMode = 'title';
   mapReturn: GameMode = 'flight';
+  journalReturn: GameMode = 'flight';
   mapZoom = 1;
   mapPan: V2 = { x: 0, y: 0 };
   navTarget: NavTarget | null = null;
@@ -100,6 +105,7 @@ export class Game {
     window.addEventListener('resize', () => this.resize());
     this.starfield = new StaticPoints(this.gl, makeStarfield(777));
     for (const k of ['pod', 'ore', 'salvage', 'fuel', 'module', 'wreck', 'prop', 'log']) this.pickupMeshes.set(k, this.meshes.create(buildPickupMesh(k), 64));
+    for (const k of ['plant', 'radiator', 'mast']) this.structureMeshes.set(k, this.meshes.create(buildStructureMesh(k), 32));
     for (let i = 0; i < 10; i++) this.asteroidMeshes.push(this.meshes.create(buildAsteroidMesh(1000 + i, false), 64));
     for (let i = 0; i < 6; i++) this.asteroidMeshesSmall.push(this.meshes.create(buildAsteroidMesh(2000 + i, true), 64));
     for (const k of ['kestrel', 'wasp', 'lancer', 'reaver', 'freighter', 'dreadnought', 'shuttle', 'sentinel'] as ShipKind[]) this.shipMeshes.set(k, this.meshes.create(buildShipMesh(k), 16));
@@ -232,11 +238,12 @@ export class Game {
     }
     if (this.mode === 'flight' && (inp.wasPressed('KeyR') || inp.wasPressed('GP2'))) {
       const p = this.world.player;
-      if (p.alive && !p.docked && this.world.time - this.lastPingAt > PING_COOLDOWN) { this.lastPingAt = this.world.time; emitPing(this.world, p.pos.x, p.pos.y); }
+      if (p.alive && !p.docked && this.world.time - this.lastPingAt > PING_COOLDOWN) { this.lastPingAt = this.world.time; emitPing(this.world, p.pos.x, p.pos.y, false, undefined, p); }
     }
     if (this.mode === 'flight') {
       if (inp.wasPressed('KeyM') || inp.wasPressed('GP8')) { this.mapReturn = 'flight'; this.mode = 'map'; sfx(this.world, 'ui'); inp.consume('KeyM'); inp.consume('GP8'); }
       else if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { this.helpReturn = 'flight'; this.mode = 'help'; inp.consume('KeyH'); inp.consume('F1'); }
+      else if (inp.wasPressed('KeyJ')) { this.journalReturn = 'flight'; this.mode = 'journal'; this.world.journalNew = 0; inp.consume('KeyJ'); }
       else if (inp.wasPressed('Escape') || inp.wasPressed('KeyP') || inp.wasPressed('GP9')) { this.mode = 'pause'; inp.consume('Escape'); inp.consume('KeyP'); inp.consume('GP9'); }
       else if (inp.wasPressed('Tab') || inp.wasPressed('KeyN') || inp.wasPressed('GP3')) this.cycleNav();
       else if (inp.wasPressed('KeyC')) this.navTarget = null;
@@ -460,7 +467,7 @@ export class Game {
     const w = this.world;
     this.resize();
     this.updateCamera(dt);
-    this.particles.update(this.mode === 'map' || this.mode === 'help' || this.mode === 'pause' ? 0 : dt);
+    this.particles.update(this.mode === 'map' || this.mode === 'help' || this.mode === 'pause' || this.mode === 'journal' ? 0 : dt);
     const cam = this.camera;
     const star = w.star;
     this.overlayDim = 0;
@@ -502,6 +509,16 @@ export class Game {
       mat4TRS(m, p.pos.x, 0, -p.pos.y, w.time * p.spin, 0, p.kind === 'pod' || p.kind === 'wreck' ? 0 : w.time * 0.7, 1, 1, 1);
       mesh.add(m, 1, 1, 1, p.kind === 'module' ? 0.5 + 0.4 * Math.sin(w.time * 5) : 0);
     }
+    for (const sx of w.structures) {
+      if (!sx.alive) continue;
+      const mesh = this.structureMeshes.get(sx.kind);
+      if (!mesh) continue;
+      const pp = structurePos(sx), n = structureNormal(sx);
+      mat4TRS(m, pp.x, 0.1, -pp.y, Math.atan2(n.y, n.x), 0, 0, 1, 1, 1);
+      const hit = w.time - sx.hitFlash < 0.08 ? 1 : 0;
+      const hot = sx.kind === 'radiator' ? sx.hot : 0;
+      mesh.add(m, 1 + hit + hot * 0.8, 1 + hit + hot * 0.2, 1 + hit, hit * 0.6 + hot * 0.4);
+    }
     for (const st of w.stations) {
       const mesh = this.stationMeshes.get(st.id);
       if (!mesh || !st.alive) continue;
@@ -516,7 +533,7 @@ export class Game {
     this.worldLines.clear();
     this.hudLines.clear();
     if (this.mode === 'flight') this.drawWorldVectors();
-    if (this.mode === 'flight' || this.mode === 'pause' || (this.mode === 'help' && this.helpReturn === 'flight')) {
+    if (this.mode === 'flight' || this.mode === 'pause' || this.mode === 'journal' || (this.mode === 'help' && this.helpReturn === 'flight')) {
       if (w.player.alive) drawFlightHud(this);
       else drawDeath(this);
     }
@@ -527,6 +544,7 @@ export class Game {
       case 'help': drawHelp(this); break;
       case 'gameover': drawGameOver(this); break;
       case 'pause': drawPause(this); break;
+      case 'journal': drawJournal(this); break;
       default: break;
     }
     this.lines.draw(this.worldLines, cam.viewProj, cam.viewportW, cam.viewportH);
@@ -558,7 +576,8 @@ export class Game {
         const n = 36;
         for (let i = 0; i < n; i++) {
           const a = (i / n) * TAU + w.time * 0.02;
-          const r0 = b.radius * 1.02, r1 = b.radius * (1.12 + 0.06 * Math.sin(w.time * 1.7 + i * 2.1)) * (w.flare.active ? 1.3 : 1);
+          const reach = w.flare.active ? 1.3 : w.flare.warned ? 1 + 0.3 * clamp(1 - w.flare.timer / 28, 0, 1) : 1;
+          const r0 = b.radius * 1.02, r1 = b.radius * (1.12 + 0.06 * Math.sin(w.time * 1.7 + i * 2.1)) * reach;
           L.seg(b.pos.x + Math.cos(a) * r0, 0, -(b.pos.y + Math.sin(a) * r0), b.pos.x + Math.cos(a) * r1, 0, -(b.pos.y + Math.sin(a) * r1), 1.4, 0.9, 0.4, 0.5, 1.5);
         }
         // heat haze: faint rings out to the danger radius so the star is felt before it is seen
@@ -623,7 +642,7 @@ export class Game {
           // base structure: a hostile glyph, keeping the tide's time while it has power
           const cp = padWorldPos(pad, 2);
           const cx = cp.x, cy = cp.y;
-          const powered = !(w.slices.cutBody === b && !w.slices.cutPowered);
+          const powered = poweredAt(w, b, cx, cy);
           const glow = powered ? tideGlow(w) : 0.1;
           if (pad.alive) {
             L.circleWorld(cx, 0.3, -cy, pad.kind === 'core' ? 5 : 3.2, 8, col[0], col[1], col[2], 0.25 + 0.55 * glow, 1.5);
@@ -843,12 +862,34 @@ export class Game {
       if (s.flashUntil > w.time) flashDiamond(s.pos.x, s.pos.y, s.radius + 1, s.faction === 'enemy' ? [1, 0.5, 0.5] : [0.7, 1, 0.95], clamp((s.flashUntil - w.time) / 1.4, 0, 1) * 0.9);
       // sentinels keep the tide's time while they have power
       if (s.kind === 'sentinel') {
-        const powered = !(s.landed && s.landed.body === w.slices.cutBody && !w.slices.cutPowered);
+        const powered = s.landed ? poweredAt(w, s.landed.body, s.pos.x, s.pos.y) : false;
         const g = powered ? tideGlow(w) : 0;
-        if (g > 0.02) L.circleWorld(s.pos.x, 0.3, -s.pos.y, 2.6 + g * 0.6, 8, 1, 0.45, 0.9, 0.1 + 0.5 * g, 1.4);
+        // the halo keeps the beat while there is power, and reddens as the gun heats; a jammed gun gutters
+        const h = s.heat;
+        const jam = s.overheated ? 0.5 + 0.5 * Math.sin(w.time * 25) : 1;
+        if (g > 0.02) L.circleWorld(s.pos.x, 0.3, -s.pos.y, 2.6 + g * 0.6 + h * 0.8, 8, 1, lerp(0.45, 0.25, h), lerp(0.9, 0.15, h), (0.1 + 0.5 * g) * jam, 1.4 + h);
+        if (h > 0.5) L.circleWorld(s.pos.x, 0.3, -s.pos.y, 1.6, 6, 1, 0.5, 0.2, (h - 0.5) * 1.2 * jam, 1.2);
       }
     }
     for (const st of w.stations) if (st.alive && st.flashUntil > w.time) L.circleWorld(st.pos.x, 0.3, -st.pos.y, st.radius + 2, 24, 0.7, 1, 0.95, clamp((st.flashUntil - w.time) / 1.2, 0, 1) * 0.6, 1.4);
+    // sockets keep the beat while a core sits in them; masts blink while they have power
+    for (const src of w.power) {
+      const sp = socketWorld(src);
+      if (src.broken) continue;
+      const g = src.powered ? tideGlow(w) : 0.08;
+      L.circleWorld(sp.x, 0.3, -sp.y, 1.6 + g * 0.5, 8, 1, 0.45, 0.9, 0.12 + 0.5 * g, 1.3);
+    }
+    for (const sx of w.structures) {
+      if (!sx.alive) continue;
+      const pp = structurePos(sx), n = structureNormal(sx);
+      if (sx.kind === 'mast') {
+        const on = poweredAt(w, sx.body, pp.x, pp.y) && (Math.floor(w.time * 1.5 + sx.id) % 3 === 0);
+        if (on) L.circleWorld(pp.x + n.x * 4, 0.4, -(pp.y + n.y * 4), 0.5, 6, 1, 0.3, 0.3, 0.9, 1.5);
+      } else if (sx.kind === 'radiator' && sx.hot > 0.05) {
+        const sun = sunlight(w, pp.x, pp.y, n);
+        L.circleWorld(pp.x + n.x * 1.5, 0.3, -(pp.y + n.y * 1.5), 1.8 + sx.hot, 8, 1, 0.55 - sun * 0.2, 0.25, sx.hot * 0.6, 1.3);
+      }
+    }
     // stranded shuttle marker
     for (const s of w.ships) {
       if (!s.alive || s.faction !== 'civ') continue;
@@ -862,6 +903,7 @@ function nearestEnemyShip(w: World, range: number): Ship | null {
   let best: Ship | null = null, bd = range;
   for (const s of w.ships) {
     if (!s.alive || s.faction !== 'enemy' || s.docked) continue;
+    if (w.time - s.sensedAt > 0.3) continue;
     const d = Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y);
     if (d < bd) { bd = d; best = s; }
   }

@@ -459,6 +459,34 @@ export function buildPadMesh(): MeshData {
   return mb.build();
 }
 
+/** Surface machinery. Built lying along +x: +x is the outward surface normal when placed. */
+export function buildStructureMesh(kind: string): MeshData {
+  const mb = new MeshBuilder();
+  switch (kind) {
+    case 'plant': {
+      // a squat armoured housing with a socket ring on top
+      box(mb, [0.5, 0, 0], [1.6, 1.2, 2.6], [0.32, 0.22, 0.3], [0.45, 0.3, 0.42]);
+      prism(mb, [1.5, 0, 0], 8, 1.1, 0.5, [0.55, 0.2, 0.6], [0.35, 0.15, 0.4], 0, 0.9);
+      box(mb, [0.2, 0, -1.5], [0.8, 0.5, 0.4], [0.25, 0.18, 0.24]);
+      box(mb, [0.2, 0, 1.5], [0.8, 0.5, 0.4], [0.25, 0.18, 0.24]);
+      break;
+    }
+    case 'radiator': {
+      // a spine with thin fins
+      box(mb, [1.2, 0, 0], [2.4, 0.3, 0.3], [0.3, 0.3, 0.34]);
+      for (let i = 0; i < 5; i++) box(mb, [0.5 + i * 0.5, 0, 0], [0.12, 0.25, 2.4 - Math.abs(i - 2) * 0.35], [0.7, 0.42, 0.3], [0.85, 0.55, 0.35]);
+      break;
+    }
+    case 'mast': {
+      prism(mb, [1.8, 0, 0], 6, 0.22, 3.6, [0.3, 0.32, 0.38]);
+      box(mb, [3.7, 0, 0], [0.3, 0.3, 1.4], [0.5, 0.2, 0.3]);
+      prism(mb, [3.9, 0, 0], 6, 0.5, 0.15, [0.9, 0.3, 0.3]);
+      break;
+    }
+  }
+  return mb.build();
+}
+
 /** Escape pod / cargo / module pickups. */
 export function buildPickupMesh(kind: string): MeshData {
   const mb = new MeshBuilder();

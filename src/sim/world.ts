@@ -4,6 +4,9 @@ import type { Body, Pad } from './bodies';
 import type { Fissure } from './walls';
 import type { Tether } from './tether';
 import type { Ping } from './ping';
+import type { PowerSource } from './power';
+import type { Structure } from './structures';
+import type { JournalEntry } from './journal';
 
 export const SIM_DT = 1 / 120;
 
@@ -69,6 +72,9 @@ export interface AiState {
   memory: number;
   groupId: number;
   wave: number;
+  lastSeen: number;     // last time the target was actually sensed
+  shotsInBurst: number; // shots fired without a jam (sentinels)
+  heldFireAt: number;
 }
 
 export interface Ship {
@@ -124,6 +130,10 @@ export interface Ship {
   stunned: number;
   flashUntil: number;
   transferHeld: boolean;
+  lastFireTime: number;
+  lastPingTime: number;
+  lastHitOwner: number; // id of the ship whose shot last hit us
+  sensedAt: number;     // last time the player's sensors had this ship
 }
 
 export interface Cargo {
@@ -167,6 +177,8 @@ export interface Asteroid {
   rogue: boolean;    // event: on collision course
   killedBy: Faction;
   flashUntil: number;
+  rested: boolean;   // came to rest on a surface
+  handled: boolean;  // the player has had it on the cable
 }
 
 export type PickupKind = 'ore' | 'salvage' | 'pod' | 'fuel' | 'module' | 'wreck' | 'prop' | 'log';
@@ -195,6 +207,8 @@ export interface Pickup {
   socketLocal: V2 | null;    // socket position in that body's local frame
   beacon: boolean;           // emits an audible blip whose rate rises with proximity
   indestructible: boolean;
+  role: '' | 'core';         // cores keep the tide's beat and seat in any socket
+  origin: string;            // the socket a core was made for
 }
 
 export interface Station {
@@ -293,11 +307,21 @@ export interface World {
   pingEvents: { body: Body; time: number; x: number; y: number }[];
   slices: SliceState;
   hudFlicker: number;
+  power: PowerSource[];
+  structures: Structure[];
+  journal: JournalEntry[];
+  journalSeen: Set<string>;
+  journalNew: number;
+  journalNoteAt: number;
+  log: SimLogEntry[];      // things that happened, for the journal and the test harness
 }
+
+export interface SimLogEntry { time: number; kind: string; text: string; x: number; y: number; param?: number; }
 
 /** State of the hand-authored experiences. Everything here persists whatever else happens. */
 export interface SliceState {
   cutBody: Body | null;
+  cutSource: PowerSource | null;
   cutFissure: Fissure | null;
   regulator: Pickup | null;
   cutPowered: boolean;
@@ -332,7 +356,7 @@ export interface SliceState {
 
 export function emptySliceState(): SliceState {
   return {
-    cutBody: null, cutFissure: null, regulator: null, cutPowered: true, cutPowerLostAt: -1e9, cutEntered: false,
+    cutBody: null, cutSource: null, cutFissure: null, regulator: null, cutPowered: true, cutPowerLostAt: -1e9, cutEntered: false,
     pilgrim: null, pilgrimSaved: false, pilgrimLost: false, pilgrimNextComm: 0, pilgrimCommIdx: 0, pilgrimAnnounced: false, pilgrimSpawnAt: 120, pilgrimLastWarn: -1e9,
     rock: null, blackBox: null, wreck: null, logPlayed: false, logLine: 0, logNext: 0, beaconNext: 0,
     fault: null, faultOnBeat: 0, faultOffBeat: 0, faultLastPing: -1e9, faultCooldownUntil: -1e9, faultFlash: 0, faultAnswerAt: -1e9, faultAnswerKind: '',
@@ -451,6 +475,10 @@ export function createShip(w: World, kind: ShipKind, faction: Faction, x: number
     stunned: 0,
     flashUntil: -1e9,
     transferHeld: false,
+    lastFireTime: -1e9,
+    lastPingTime: -1e9,
+    lastHitOwner: -1,
+    sensedAt: -1e9,
   };
   w.ships.push(ship);
   return ship;
@@ -494,6 +522,13 @@ export function createEmptyWorld(seed: number, seedName: string): World {
     pingEvents: [],
     slices: emptySliceState(),
     hudFlicker: 0,
+    power: [],
+    structures: [],
+    journal: [],
+    journalSeen: new Set(),
+    journalNew: 0,
+    journalNoteAt: -1e9,
+    log: [],
   };
   return w;
 }

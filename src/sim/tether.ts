@@ -152,6 +152,7 @@ export function attach(w: World, s: Ship): boolean {
   t.length = Math.max(TETHER_MIN, Math.min(TETHER_MAX, d));
   s.tether = t;
   if (t.kind === 'pickup') { t.pickup!.tetheredBy = s; if (t.pickup!.kind === 'pod') s.towing = t.pickup; }
+  if (t.kind === 'asteroid' && t.asteroid && s === w.player) { t.asteroid.handled = true; t.asteroid.rested = false; }
   sfx(w, 'tether', s.pos, 0.8, 0);
   return true;
 }

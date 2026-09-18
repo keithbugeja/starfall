@@ -75,6 +75,28 @@ describe('system generation', () => {
         expect(b.terrain[i]).toBeGreaterThan(b.radius * 0.6);
         expect(b.terrain[i]).toBeLessThan(b.radius * 1.4);
       }
+      // every enemy base carries the same kit; the Kiln has a plant with a seated core; the enemy world's bases draw from the Cut's socket
+      const bases = w.pads.filter(p => p.kind === 'enemybase' || p.kind === 'core');
+      for (const p of bases) {
+        expect(p.mast && p.mast.alive).toBeTruthy();
+        expect(p.radiator && p.radiator.alive).toBeTruthy();
+        const grid = w.power.some(src => src.body === p.body && src.range === Infinity);
+        if (grid) expect(p.plant).toBeNull(); else expect(p.plant && p.plant.alive).toBeTruthy();
+      }
+      const kiln = w.pads.find(p => p.name === 'THE KILN');
+      expect(kiln).toBeTruthy();
+      expect(kiln!.guns).toBe(2);
+      for (const src of w.power) expect(src.powered && src.core && src.core.alive).toBeTruthy();
+      // structures stand on the surface, outside every pad's flat chord
+      for (const st of w.structures) {
+        const b = st.body;
+        const r = Math.hypot(st.local.x, st.local.y);
+        const ang = Math.atan2(st.local.y, st.local.x);
+        expect(Math.abs(r - terrainRadiusAt(b, ang))).toBeLessThan(st.radius + 0.5);
+        for (const pd of b.pads) expect(Math.abs(Math.atan2(Math.sin(ang - pd.angle), Math.cos(ang - pd.angle))) * b.radius).toBeGreaterThan(pd.halfWidth + 1);
+      }
+      // worlds turn
+      for (const b of w.bodies) if (b.kind === 'planet' && b.name !== 'THE FAULT' && b.name !== 'HOLLOW') { expect(b.rotates).toBe(true); expect(Math.abs(b.spin)).toBeGreaterThan(0.004); }
       // asteroids start outside bodies
       for (const a of w.asteroids) {
         for (const b of w.bodies) {
@@ -107,6 +129,8 @@ describe('simulation stability', () => {
           for (const a of w.asteroids) expect(Number.isFinite(a.pos.x + a.vel.x)).toBe(true);
           expect(w.ships.length).toBeLessThan(80);
           expect(w.projectiles.length).toBeLessThan(600);
+          expect(w.log.length).toBeLessThanOrEqual(600);
+          for (const k of w.pickups) expect(Number.isFinite(k.pos.x + k.vel.x)).toBe(true);
         }
       }
       // the director produced life

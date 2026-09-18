@@ -38,6 +38,7 @@ Open the URL Vite prints (usually http://localhost:5173), press ENTER.
 | T | cable: latch the nearest thing within reach, or let go |
 | R | ping: a sensor pulse; watch what comes back |
 | F (hold) | transfer fuel into what you are landed on or touching |
+| J | journal: what you have seen, in your own words |
 | Esc | pause (in the dock: nothing; L launches) |
 
 Gamepad: left stick turns, right trigger thrusts, A fires, B boosts, bumpers strafe, Start pauses,
@@ -57,9 +58,19 @@ Back opens the map.
 - The cable is a real physical rope: a taut cable is a pendulum, a load changes your handling, a yank
   over about seven units per second parts it, a steady pull never does, and pulling on a rotating
   ring or hull applies torque. Ping returns geometry and echoes, never labels.
+- Worlds turn. Every installation has a day and a night, and a crater rim or a moon can hide a
+  ship from a gun. Enemy bases are made of parts: a mast that sees far, radiator fins that shed the
+  heat of the guns (well in shadow, badly in sunlight), and either a local plant with a core in its
+  socket or a feed from the world's grid. Guns need power and jam when hot; sensors need power,
+  emissions and a clear line of sight; a ship coasting with its engines off is a small target for
+  any sensor, and a ping is a very loud one. Cores fit any socket. Parts have integrity and armour:
+  fins die to small arms, an armoured housing does not, but a rock falling from height cracks it.
+  Slow rocks stay where they fall. Nothing tells you which of these to use.
+- The journal (J) records what you saw, never what it means.
 - Three hand-built situations exist in every system. They are not marked. Look for a crack in the
   enemy world, a large silent hull that arrives on a bad course, and a signal you can hear before
-  you can see it.
+  you can see it. A fourth, a gun position in a crater within reach of a colony, is built from the
+  same parts as every other base and is only different in where it stands.
 - The run ends when your three hulls are gone, or when you destroy the Starfall core on the
   enemy world (red on the map). Spare hulls come with score. After a win you can keep flying.
 

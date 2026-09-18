@@ -2,7 +2,9 @@
 // civilian traffic, colony and mine economies. Nothing here is a quest marker; everything is a situation.
 import { TAU, type V2 } from '../engine/math';
 import { spawnAiShip, spawnSentinel } from './ai';
-import { addPad, terrainNormalAt, type Body, type Pad } from './bodies';
+import { addPad, padWorldAngle, padWorldPos, surfaceVelocity, terrainNormalAt, type Body, type Pad } from './bodies';
+import { poweredAt } from './power';
+import { equipBase } from './installations';
 import { createAsteroid, damageBase, padDamaged, spawnPickup } from './physics';
 import { comm, sfx, type Asteroid, type EventKind, type GameEvent, type Ship, type Station, type World } from './world';
 
@@ -33,9 +35,7 @@ function livingColonies(w: World): Pad[] { return w.pads.filter(p => p.alive && 
 function enemyBases(w: World): Pad[] { return w.pads.filter(p => p.alive && (p.kind === 'enemybase' || p.kind === 'core')); }
 function dist(a: V2, b: V2): number { return Math.hypot(a.x - b.x, a.y - b.y); }
 
-function padPos(p: Pad, alt = 0): V2 {
-  return { x: p.body.pos.x + Math.cos(p.angle) * (p.height + alt), y: p.body.pos.y + Math.sin(p.angle) * (p.height + alt) };
-}
+function padPos(p: Pad, alt = 0): V2 { return padWorldPos(p, alt); }
 
 /** Direction from the enemy world toward a point (so raids arrive from a consistent side). */
 function fromEnemyDir(w: World, target: V2): V2 {
@@ -59,10 +59,7 @@ export function updateDirector(w: World, dt: number): void {
 function directorStep(w: World, dt: number, d: DirectorState): void {
   if (!d.initialized) {
     d.initialized = true;
-    for (const b of enemyBases(w)) {
-      spawnSentinel(w, b);
-      if (b.kind === 'core') { spawnSentinel(w, b).ai!.strafeDir = -1; }
-    }
+    for (const b of enemyBases(w)) for (let i = 0; i < b.guns; i++) spawnSentinel(w, b, i);
     comm(w, 'CONTROL', `PATROL KESTREL, CLEARED TO LAUNCH. THE STARFALL ON ${w.enemyCore ? w.enemyCore.body.name : 'THE OUTER WORLD'} IS ACTIVE AGAIN. KEEP THE COLONIES ALIVE. KILL THE CORE WHEN YOU CAN.`, [0.6, 0.9, 1], 1);
   }
   if (w.gameOver) return;
@@ -77,13 +74,20 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
     if (b.spawnTimer <= 0) {
       b.spawnTimer = Math.max(45, 120 - w.threat * 6) + w.rng.next() * 30;
       const enemiesAlive = w.ships.filter(s => s.alive && s.faction === 'enemy' && s.kind !== 'sentinel').length;
+      const pp = padPos(b, 2);
+      if (!poweredAt(w, b.body, pp.x, pp.y)) { w.log.push({ time: w.time, kind: 'no-launch', text: b.name, x: pp.x, y: pp.y }); continue; }
       if (enemiesAlive < 5 + Math.floor(w.threat * 0.5)) spawnWave(w, b);
     }
   }
-  // sentinels regrow slowly at bases
+  // sentinels regrow slowly at bases, and powered bases rebuild broken fins and masts
   for (const b of bases) {
+    const pp0 = padPos(b, 2);
+    if (poweredAt(w, b.body, pp0.x, pp0.y)) for (const st of [b.radiator, b.mast]) {
+      if (st && !st.alive && w.rng.chance(dt / 150)) { st.alive = true; st.integrity = st.integrityMax; st.hot = 0; w.log.push({ time: w.time, kind: 'structure-rebuilt', text: `${st.kind.toUpperCase()} AT ${b.name}`, x: pp0.x, y: pp0.y }); }
+    }
     const guards = w.ships.filter(s => s.alive && s.kind === 'sentinel' && s.ai?.home === b).length;
-    if (guards < (b.kind === 'core' ? 2 : 1) && w.rng.chance(dt / 40)) spawnSentinel(w, b);
+    const pp = padPos(b, 2);
+    if (guards < b.guns && poweredAt(w, b.body, pp.x, pp.y) && w.rng.chance(dt / 40)) spawnSentinel(w, b, guards);
   }
 
   // events
@@ -136,7 +140,7 @@ function despawnFarEnemies(w: World): void {
 function spawnWave(w: World, base: Pad): void {
   const b = base.body;
   const n = w.threat < 3 ? 2 : w.threat < 7 ? 3 : 4;
-  const a = base.angle + (w.rng.next() - 0.5) * 0.8;
+  const a = padWorldAngle(base) + (w.rng.next() - 0.5) * 0.8;
   const r = b.radius * 1.6 + 20;
   const pl = w.player;
   const colonies = livingColonies(w);
@@ -334,7 +338,8 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
         angle = w.rng.next() * TAU;
         if (b.pads.every(p => Math.abs(Math.atan2(Math.sin(p.angle - angle), Math.cos(p.angle - angle))) * b.radius > 30)) break;
       }
-      const site = { x: b.pos.x + Math.cos(angle) * (b.radius + 40), y: b.pos.y + Math.sin(angle) * (b.radius + 40) };
+      const wa = angle + (b.rotates ? b.spinAngle : 0);
+      const site = { x: b.pos.x + Math.cos(wa) * (b.radius + 40), y: b.pos.y + Math.sin(wa) * (b.radius + 40) };
       const dir = fromEnemyDir(w, site);
       const builder = spawnAiShip(w, 'reaver', 'enemy', site.x - dir.x * 300, site.y - dir.y * 300, Math.atan2(dir.y, dir.x), 'build', b);
       const e = newEvent(w, 'construction', site, `ENEMY CONSTRUCTION AT ${b.name}`, 150, 500);
@@ -358,7 +363,7 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
       const ast = createAsteroid(w, x, y, 0, 0, 3, -1);
       ast.radius = 5.2; ast.hp = 110; ast.rogue = true;
       // aim: straight at the target with a lead for its motion
-      const tv = 'spin' in tgt ? tgt.vel : (tgt as Pad).body.vel;
+      const tv = 'spin' in tgt ? tgt.vel : surfaceVelocity((tgt as Pad).body, tp.x, tp.y);
       const speed = 8.5;
       const tt = r / speed;
       const ax = tp.x + tv.x * tt - x, ay = tp.y + tv.y * tt - y;
@@ -507,7 +512,8 @@ function updateEvents(w: World, dt: number): void {
         const angle = e.data.angle as number;
         if (!builder.alive) { resolve(w, e, true, `CONSTRUCTOR DESTROYED. ${b.name} STAYS OURS.`); break; }
         // builder flies to the site and then 'lands' by proximity to the surface point
-        const site = { x: b.pos.x + Math.cos(angle) * (b.radius * 1.0 + 12), y: b.pos.y + Math.sin(angle) * (b.radius + 12) };
+        const wa = angle + (b.rotates ? b.spinAngle : 0);
+        const site = { x: b.pos.x + Math.cos(wa) * (b.radius * 1.0 + 12), y: b.pos.y + Math.sin(wa) * (b.radius + 12) };
         e.pos = site;
         builder.ai!.targetPos = site;
         builder.ai!.mode = 'build';
@@ -520,6 +526,7 @@ function updateEvents(w: World, dt: number): void {
             const pad = addPad(b, 'enemybase', `BASE ${['NOVEMBER', 'OSCAR', 'PAPA', 'QUEBEC', 'ROMEO'][w.pads.filter(p => p.kind === 'enemybase').length % 5]}`, angle, 5);
             pad.enemyHealth = 300; pad.spawnTimer = 30;
             w.pads.push(pad);
+            equipBase(w, pad, w.power.some(src => src.body === b && src.range === Infinity), w.rng);
             (b as unknown as { meshDirty: boolean }).meshDirty = true;
             builder.alive = false;
             spawnSentinel(w, pad);
@@ -604,7 +611,7 @@ function spawnTraffic(w: World): void {
     const fp = padPos(from, from.body.radius * 0.6 + 30);
     const f = spawnAiShip(w, 'freighter', 'civ', fp.x, fp.y, Math.atan2(to.pos.y - fp.y, to.pos.x - fp.x), 'travel', null);
     f.ai!.home = to;
-    const n = terrainNormalAt(from.body, from.angle);
+    const n = terrainNormalAt(from.body, padWorldAngle(from));
     f.vel.x = from.body.vel.x + n.x * 12; f.vel.y = from.body.vel.y + n.y * 12;
   } else {
     // shuttle from a station to a pad

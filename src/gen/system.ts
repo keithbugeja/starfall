@@ -1,7 +1,8 @@
 // Star system generation. One dense, designed system per seed: a star, a handful of distinct worlds,
 // moons, belts, three stations, colonies and mines to protect, derelicts to find, and an enemy foothold.
 import { Rng, TAU } from '../engine/math';
-import { addPad, createBody, resetBodyIds, type Body, type Pad, type PlanetType } from '../sim/bodies';
+import { addPad, createBody, makeBodyRng, resetBodyIds, type Body, type Pad, type PlanetType } from '../sim/bodies';
+import { authorKiln, equipBase } from '../sim/installations';
 import { createAsteroid, spawnPickup } from '../sim/physics';
 import { createStation } from '../sim/stations';
 import { createEmptyWorld, createShip, type World } from '../sim/world';
@@ -63,6 +64,7 @@ export function generateSystem(seed: number, seedName: string): World {
     }
     const period = 1500 + orbit * 1.4 + rng.int(800);
     const body = createBody({ name: role === 'enemy' ? names.world() : names.world(), kind: type === 'gas' ? 'gas' : 'planet', type, radius, surfaceG: g, roughness: rough, orbit: { parent: star, radius: orbit, period, phase }, palette: pal, seed: seed + 101 * (i + 1), landable: type !== 'gas', soiMul: type === 'gas' ? 5.5 : 7 });
+    if (type !== 'gas') { const br = makeBodyRng(seed, 31 + i); body.rotates = true; body.spin = br.sign() * (0.005 + br.next() * 0.005); }
     w.bodies.push(body);
     const plan: PlanetPlan = { body, role, moons: [] };
     plans.push(plan);
@@ -72,6 +74,7 @@ export function generateSystem(seed: number, seedName: string): World {
     for (let m = 0; m < moonCount; m++) {
       const mr = 22 + rng.int(18);
       const moon = createBody({ name: names.moon(), kind: 'moon', type: rng.chance(0.5) ? 'ice' : 'rock', radius: mr, surfaceG: 2.2 + rng.next() * 1.4, roughness: 0.12 + rng.next() * 0.06, orbit: { parent: body, radius: mOrbit, period: 260 + mOrbit * 1.2 + rng.int(200), phase: rng.next() * TAU }, palette: rng.chance(0.5) ? PALETTES.ice : PALETTES.rock2, seed: seed + 977 * (i + 1) + m * 31, soiMul: 4.5 });
+      { const mr2 = makeBodyRng(seed, 61 + i * 7 + m); moon.rotates = true; moon.spin = mr2.sign() * (0.005 + mr2.next() * 0.006); }
       w.bodies.push(moon);
       plan.moons.push(moon);
       mOrbit += mr * 3 + 70 + rng.int(40);
@@ -151,12 +154,18 @@ export function generateSystem(seed: number, seedName: string): World {
   {
     const a = spreadAngles(3, rng);
     const core = addPad(enemy.body, 'core', 'THE STARFALL', a[0], 6);
-    core.enemyHealth = 800; core.spawnTimer = 30;
+    core.enemyHealth = 800; core.spawnTimer = 30; core.guns = 2;
     w.enemyCore = core;
     for (let i = 1; i < 3; i++) { const b = addPad(enemy.body, 'enemybase', `BASE ${i === 1 ? 'KILO' : 'LIMA'}`, a[i], 5); b.enemyHealth = 240; b.spawnTimer = 20 + i * 15; }
     for (const m of enemy.moons) { const b = addPad(m, 'enemybase', 'BASE MIKE', rng.next() * TAU, 5); b.enemyHealth = 200; b.spawnTimer = 40; }
   }
-  for (const b of w.bodies) for (const p of b.pads) w.pads.push(p);
+  // THE KILN: an enemy gun position in a crater within reach of the mid world's colony
+  const instRng = makeBodyRng(seed, 777);
+  const midColony = mid.body.pads.find(p => p.kind === 'colony');
+  const kiln = midColony ? authorKiln(w, mid.body, midColony, instRng) : null;
+  for (const b of w.bodies) for (const p of b.pads) if (p !== kiln) w.pads.push(p);
+  // every base gets the same machinery: a mast, radiator fins, and a plant unless the world's grid feeds it
+  for (const p of w.pads) if ((p.kind === 'enemybase' || p.kind === 'core') && p !== kiln) equipBase(w, p, p.body === enemy.body, instRng);
 
   // ---------------- stations
   /** Pick a station orbit radius around a parent that stays clear of its moons' orbits. */
@@ -210,11 +219,12 @@ export function generateSystem(seed: number, seedName: string): World {
   w.respawnStation = harbour;
 
   // ---------------- asteroids
-  // main belt between mid and gas orbits
+  // main belt between the mid world and the next world out (never straddling an orbit: a world that
+  // sweeps through a belt rains rocks on everything it carries)
   {
-    const r0 = mid.body.orbit!.radius, r1 = gas.body.orbit!.radius;
+    const r0 = mid.body.orbit!.radius, r1 = plans[3].body.orbit!.radius;
     const beltR = (r0 + r1) / 2;
-    const width = Math.min(160, (r1 - r0) * 0.22);
+    const width = Math.min(110, (r1 - r0) * 0.12);
     const n = 170 + rng.int(60);
     for (let i = 0; i < n; i++) {
       const a = rng.next() * TAU;
@@ -269,7 +279,7 @@ export function generateSystem(seed: number, seedName: string): World {
   for (let i = 0; i < 2; i++) {
     const from = rng.pick(w.pads.filter(p => p.kind === 'colony' || p.kind === 'mine'));
     const fb = from.body;
-    const a = from.angle;
+    const a = from.angle + (fb.rotates ? fb.spinAngle : 0);
     const f = spawnAiShip(w, 'freighter', 'civ', fb.pos.x + Math.cos(a) * (fb.radius * 1.6 + 30), fb.pos.y + Math.sin(a) * (fb.radius * 1.6 + 30), a, 'travel', null);
     f.ai!.home = rng.pick(w.stations);
   }

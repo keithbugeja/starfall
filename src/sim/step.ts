@@ -9,6 +9,10 @@ import { updatePings } from './ping';
 import { podDelivered, stepFreeBodies, updateSlices } from './slices';
 import { stationContact, updateStations } from './stations';
 import { release, solveTethers } from './tether';
+import { updatePower } from './power';
+import { stepStructures } from './structures';
+import { updateJournal } from './journal';
+import { canSense, hasSensors } from './sense';
 import { comm, sfx, type Ship, type World } from './world';
 
 export interface StepOptions {
@@ -43,7 +47,9 @@ export function stepWorld(w: World, c: Controls, dt: number, opts: StepOptions):
   stepProjectiles(w, dt);
   stepAsteroids(w, dt);
   stepPickups(w, dt);
+  updatePower(w, dt);
   collide(w, dt);
+  stepStructures(w, dt);
   let docked = false;
   for (const s of w.ships) {
     if (!s.alive || s.docked) continue;
@@ -55,9 +61,26 @@ export function stepWorld(w: World, c: Controls, dt: number, opts: StepOptions):
   pruneShips(w);
   updatePings(w, dt);
   updateSlices(w, dt);
+  updatePlayerSensing(w);
+  updateJournal(w, dt);
+  if (w.log.length > 600) w.log.splice(0, w.log.length - 600);
   w.time += dt;
   w.tick++;
   return docked;
+}
+
+/** The player's own sensors obey the same rules as everyone else's: emissions, range, line of sight. */
+function updatePlayerSensing(w: World): void {
+  const p = w.player;
+  if (!p.alive) return;
+  const range = hasSensors(p) ? 1100 : 550;
+  for (const s of w.ships) {
+    if (s === p || !s.alive || s.docked) continue;
+    if ((w.tick + s.id) % 6 !== 0) continue;
+    const d = Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y);
+    // a ping lit it, it just shot, or we can see it
+    if (s.flashUntil > w.time || (w.time - s.lastFireTime < 2 && d < range) || d < 30 || canSense(w, p.pos.x, p.pos.y, range, s)) s.sensedAt = w.time;
+  }
 }
 
 /** Refuel, repair, load ore, deliver pods and strip derelicts while landed on a pad. */

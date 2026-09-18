@@ -5,6 +5,8 @@ import { addPad, createBody, padWorldPos, surfaceVelocity, terrainRadiusAt, type
 import { gravityAt, predictTrajectory, spawnPickup, type Trajectory } from './physics';
 import { bodyToWorld, fissureFromPath, notchTerrain } from './walls';
 import { comm, sfx, type Pickup, type World } from './world';
+import { addPowerSource, spawnCore } from './power';
+import { note } from './journal';
 
 export const TIDE_PERIOD = 3.0;
 
@@ -63,9 +65,12 @@ function authorTheCut(w: World): void {
   // the regulator sits in a socket near the chamber floor
   const socketLocal = localFromPath(mouth, rimNow, 47, -2);
   const wp = bodyToWorld(b, socketLocal);
-  const reg = spawnPickup(w, 'prop', wp.x, wp.y, b.vel.x, b.vel.y, 0, null, 'REGULATOR');
-  reg.radius = 1.0; reg.mass = 0.7; reg.glow = 1; reg.socketBody = b; reg.socketLocal = socketLocal; reg.indestructible = true;
-  w.slices.cutBody = b; w.slices.cutFissure = f; w.slices.regulator = reg; w.slices.cutPowered = true;
+  // the regulator feeds the whole world: every base on it draws from this one socket
+  const src = addPowerSource(w, b, socketLocal, Infinity, b.name);
+  const reg = spawnCore(w, src, 'REGULATOR');
+  reg.socketBody = b; reg.socketLocal = socketLocal;
+  void wp;
+  w.slices.cutBody = b; w.slices.cutSource = src; w.slices.cutFissure = f; w.slices.regulator = reg; w.slices.cutPowered = true;
 }
 
 function localFromPath(mouth: number, rim: number, d: number, v: number): V2 {
@@ -232,25 +237,10 @@ function smooth(a: number, b: number, x: number): number {
 export function updateSlices(w: World, dt: number): void {
   const S = w.slices;
   const p = w.player;
-  // ---- the Cut: regulator socket, power state
-  if (S.regulator && S.cutBody) {
-    const reg = S.regulator;
+  // ---- the Cut: the power state is the world grid's (see power.ts)
+  if (S.cutSource && S.cutBody) {
     const b = S.cutBody;
-    const sp = bodyToWorld(b, reg.socketLocal!);
-    const d = Math.hypot(reg.pos.x - sp.x, reg.pos.y - sp.y);
-    const powered = d < 4;
-    if (!reg.tetheredBy && d < 6 && d > 0.3) {
-      // the socket draws the regulator home
-      const k = 3 * dt;
-      reg.vel.x += (sp.x - reg.pos.x) / d * k * 3; reg.vel.y += (sp.y - reg.pos.y) / d * k * 3;
-      const sv = surfaceVelocity(b, reg.pos.x, reg.pos.y);
-      reg.vel.x = sv.x + (reg.vel.x - sv.x) * (1 - 2 * dt); reg.vel.y = sv.y + (reg.vel.y - sv.y) * (1 - 2 * dt);
-    }
-    if (powered !== S.cutPowered) {
-      S.cutPowered = powered;
-      if (!powered) { S.cutPowerLostAt = w.time; comm(w, 'SENSORS', `SENTINEL EMISSIONS ON ${b.name} HAVE STOPPED.`, [0.85, 0.45, 1.0], 2); sfx(w, 'powerdown', reg.pos, 1); }
-      else { comm(w, 'SENSORS', `SENTINEL EMISSIONS ON ${b.name} HAVE RESUMED.`, [1, 0.5, 0.3], 2); }
-    }
+    if (S.cutSource.powered !== S.cutPowered) { S.cutPowered = S.cutSource.powered; if (!S.cutPowered) S.cutPowerLostAt = w.time; }
     if (!S.cutEntered && S.cutFissure) {
       const l = bodyToWorld(b, S.cutFissure.outline[0]);
       if (Math.hypot(p.pos.x - l.x, p.pos.y - l.y) < 40 && Math.hypot(p.pos.x - b.pos.x, p.pos.y - b.pos.y) < b.radius - 4) { S.cutEntered = true; }
@@ -271,6 +261,7 @@ export function updateSlices(w: World, dt: number): void {
       const done = S.pilgrimSaved;
       if (!done) {
         comm(w, 'PILGRIM', lines[S.pilgrimCommIdx % lines.length], [0.8, 0.85, 1.0], 1, h.pos);
+        if (S.pilgrimCommIdx % lines.length === 1) note(w, 'pilgrim-tanks', `THE PILGRIM SAYS THREE OF HER TANKS STILL HOLD PRESSURE. HER DRIVE IS COLD, NOT BROKEN.`);
         S.pilgrimCommIdx++;
         S.pilgrimNextComm = w.time + 26;
       }
@@ -300,6 +291,7 @@ export function updateSlices(w: World, dt: number): void {
   if (p.landed && p.landed.pad && p.landed.pad.kind === 'thruster' && p.transferHeld && p.fuel > 0) {
     const pad = p.landed.pad;
     const t = pad.body.thrusters.find(x => x.pad === pad);
+    if (t) note(w, 'pilgrim-valve', `THE VALVE ON THE PILGRIM'S ${t.name} TOOK MY FUEL. WHOEVER BUILT HER LEFT THE FITTINGS STANDARD.`);
     if (t && t.fuel < t.capacity) {
       const amt = Math.min(6 * dt, p.fuel, t.capacity - t.fuel);
       t.fuel += amt; p.fuel -= amt;
@@ -327,13 +319,14 @@ export function updateSlices(w: World, dt: number): void {
       comm(w, 'KESTREL SEVEN', lines[S.logLine], [1, 0.9, 0.5], 2);
       S.logLine++;
       S.logNext = w.time + 5;
-      if (S.logLine >= lines.length) S.logPlayed = true;
+      if (S.logLine >= lines.length) { S.logPlayed = true; note(w, 'kestrel-seven', `KESTREL SEVEN'S LOG, FROM THE CAVE IN THE HOLLOW ROCK. ANOTHER PATROL PILOT, YEARS BACK. THE FAULT 'KEEPS TIME WITH THE STARFALL', THE LOG SAYS.`); }
     }
   }
   // ---- the Fault's answer
   if (S.fault) {
     for (const ev of w.pingEvents) {
       if (ev.body !== S.fault) continue;
+      note(w, 'fault-flash', `THE FAULT FLASHED WHEN MY SCAN REACHED IT. ROCKS DO NOT DO THAT.`);
       if (w.time < S.faultCooldownUntil) { S.faultFlash = 0.3; continue; }
       const ph = (ev.time % TIDE_PERIOD) / TIDE_PERIOD;
       const onBeat = Math.min(ph, 1 - ph) < 0.13;

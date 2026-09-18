@@ -2,6 +2,7 @@
 // as the collision surface. Gravity is 1/r^2 clamped, faded to zero at the sphere of influence.
 import { clamp, fbm3, lerp, Rng, smoothstep, TAU, type V2 } from '../engine/math';
 import type { Fissure } from './walls';
+import type { Structure } from './structures';
 
 export type BodyKind = 'star' | 'planet' | 'moon' | 'gas' | 'hull';
 export type PlanetType = 'rock' | 'ice' | 'volcanic' | 'desert' | 'gas' | 'star' | 'crystal';
@@ -29,6 +30,10 @@ export interface Pad {
   spawnTimer: number;
   discovered: boolean;
   integrity: number;   // 0..100 structural health for colonies and mines
+  guns: number;        // enemy bases: sentinels the base keeps
+  plant: Structure | null;    // local power plant (null when fed from the body's grid)
+  radiator: Structure | null; // sheds the heat of the base's guns
+  mast: Structure | null;     // long-range sensor
 }
 
 export interface Orbit {
@@ -113,6 +118,7 @@ export interface BodySpec {
   tetherable?: boolean;
   profile?: (angle: number) => number; // custom radius profile (hulls)
   segments?: number;
+  spin?: number;       // rad/s for bodies whose terrain turns (day and night)
 }
 
 export function createBody(spec: BodySpec): Body {
@@ -139,7 +145,7 @@ export function createBody(spec: BodySpec): Body {
     meshIndex: -1,
     seed: spec.seed,
     heatRadius: spec.kind === 'star' ? spec.radius * 1.9 : 0,
-    spin: spec.kind === 'gas' ? 0.03 : spec.kind === 'star' ? 0.01 : 0,
+    spin: spec.spin ?? (spec.kind === 'gas' ? 0.03 : spec.kind === 'star' ? 0.01 : 0),
     spinAngle: 0,
     maxRadius: spec.radius,
     rotates: spec.rotates ?? false,
@@ -202,6 +208,7 @@ export function addPad(b: Body, kind: PadKind, name: string, angle: number, half
     id: nextPadId++, body: b, kind, name, angle: centre, segIndex: idx, height: h, halfWidth,
     alive: true, population: 0, stock: 0, fuel: false, repair: false, visited: false, lastRaid: -1e9,
     enemyHealth: 0, spawnTimer: 0, discovered: false, integrity: 100,
+    guns: 1, plant: null, radiator: null, mast: null,
   };
   b.pads.push(pad);
   b.terrain[i0] = h;
@@ -229,7 +236,7 @@ export function padWorldPos(p: Pad, alt = 0): V2 {
 
 /** Velocity of the body's surface at a world point (includes rotation of free hulls). */
 export function surfaceVelocity(b: Body, x: number, y: number): V2 {
-  const wv = b.free ? b.angVel : 0;
+  const wv = b.rotates ? (b.free ? b.angVel : b.spin) : 0;
   if (wv === 0) return { x: b.vel.x, y: b.vel.y };
   const rx = x - b.pos.x, ry = y - b.pos.y;
   return { x: b.vel.x - wv * ry, y: b.vel.y + wv * rx };
