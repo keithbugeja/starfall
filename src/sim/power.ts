@@ -88,13 +88,14 @@ export function updatePower(w: World, dt: number): void {
     src.core = seated;
     if (powered !== src.powered) {
       src.powered = powered;
+      const near = src.range === Infinity || Math.hypot(w.player.pos.x - sp.x, w.player.pos.y - sp.y) < 500;
       if (!powered) {
         src.lostAt = w.time;
-        comm(w, 'SENSORS', `EMISSIONS AT ${src.name} HAVE STOPPED.`, [0.85, 0.45, 1.0], 2, sp);
+        if (near) comm(w, 'SENSORS', `EMISSIONS AT ${src.name} HAVE STOPPED.`, [0.85, 0.45, 1.0], 2, sp);
         sfx(w, 'powerdown', sp, 1);
         w.log.push({ time: w.time, kind: 'power-lost', text: `${src.name} DARK`, x: sp.x, y: sp.y });
       } else {
-        comm(w, 'SENSORS', `EMISSIONS AT ${src.name} HAVE RESUMED.`, [1, 0.5, 0.3], 2, sp);
+        if (near) comm(w, 'SENSORS', `EMISSIONS AT ${src.name} HAVE RESUMED.`, [1, 0.5, 0.3], 2, sp);
         w.log.push({ time: w.time, kind: 'power-restored', text: `${src.name} LIT`, x: sp.x, y: sp.y });
       }
     }

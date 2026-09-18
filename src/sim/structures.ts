@@ -78,13 +78,12 @@ export function destroyStructure(w: World, s: Structure, source: string): void {
     const d = spawnPickup(w, 'wreck', p.x + n.x * 0.5, p.y + n.y * 0.5, sv.x + Math.cos(a) * (2 + w.rng.next() * 3), sv.y + Math.sin(a) * (2 + w.rng.next() * 3), 0, null, 'DEBRIS');
     d.radius = 1.0; d.mass = 1.2; d.tetherable = true;
   }
-  if (s.kind === 'plant') {
-    for (const src of w.power) if (src.plant === s) breakSocket(w, src);
-    comm(w, 'SENSORS', `THE HOUSING AT ${s.pad ? s.pad.name : s.name} HAS CRACKED.`, [1, 0.6, 0.3], 2, p);
-  } else if (s.kind === 'radiator') {
-    comm(w, 'SENSORS', `RADIATOR FINS AT ${s.pad ? s.pad.name : s.name} ARE GONE.`, [1, 0.6, 0.3], 1, p);
-  } else {
-    comm(w, 'SENSORS', `THE MAST AT ${s.pad ? s.pad.name : s.name} IS DOWN.`, [1, 0.6, 0.3], 1, p);
+  if (s.kind === 'plant') for (const src of w.power) if (src.plant === s) breakSocket(w, src);
+  const near = Math.hypot(w.player.pos.x - p.x, w.player.pos.y - p.y) < 400;
+  if (near) {
+    if (s.kind === 'plant') comm(w, 'SENSORS', `THE HOUSING AT ${s.pad ? s.pad.name : s.name} HAS CRACKED.`, [1, 0.6, 0.3], 2, p);
+    else if (s.kind === 'radiator') comm(w, 'SENSORS', `RADIATOR FINS AT ${s.pad ? s.pad.name : s.name} ARE GONE.`, [1, 0.6, 0.3], 1, p);
+    else comm(w, 'SENSORS', `THE MAST AT ${s.pad ? s.pad.name : s.name} IS DOWN.`, [1, 0.6, 0.3], 1, p);
   }
   w.log.push({ time: w.time, kind: 'structure-destroyed', text: `${s.kind.toUpperCase()} AT ${s.pad ? s.pad.name : s.name} DESTROYED BY ${source.toUpperCase()}`, x: p.x, y: p.y });
 }

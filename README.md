@@ -58,14 +58,10 @@ Back opens the map.
 - The cable is a real physical rope: a taut cable is a pendulum, a load changes your handling, a yank
   over about seven units per second parts it, a steady pull never does, and pulling on a rotating
   ring or hull applies torque. Ping returns geometry and echoes, never labels.
-- Worlds turn. Every installation has a day and a night, and a crater rim or a moon can hide a
-  ship from a gun. Enemy bases are made of parts: a mast that sees far, radiator fins that shed the
-  heat of the guns (well in shadow, badly in sunlight), and either a local plant with a core in its
-  socket or a feed from the world's grid. Guns need power and jam when hot; sensors need power,
-  emissions and a clear line of sight; a ship coasting with its engines off is a small target for
-  any sensor, and a ping is a very loud one. Cores fit any socket. Parts have integrity and armour:
-  fins die to small arms, an armoured housing does not, but a rock falling from height cracks it.
-  Slow rocks stay where they fall. Nothing tells you which of these to use.
+- Worlds turn, so every place has a day and a night. Enemy bases are made of parts: a mast, radiator
+  fins, and a socket with a core in it, or a feed from the world's grid. Guns need power and heat up
+  when they fire. Sensors need power, something to hear, and a clear line of sight. Parts can be
+  damaged; slow rocks stay where they fall. Nothing tells you what any of this is for.
 - The journal (J) records what you saw, never what it means.
 - Three hand-built situations exist in every system. They are not marked. Look for a crack in the
   enemy world, a large silent hull that arrives on a bad course, and a signal you can hear before

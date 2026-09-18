@@ -3,7 +3,7 @@
 // dreadnoughts besiege stations, sentinels guard bases. Civilians travel and dock.
 import { angleDiff, clamp, TAU, type V2 } from '../engine/math';
 import { emptyControls, type Controls } from '../engine/input';
-import { maxTerrainRadius, padWorldAngle, padWorldPos, terrainNormalAt, terrainRadiusAt, type Body, type Pad } from './bodies';
+import { maxTerrainRadius, padWorldAngle, padWorldPos, surfaceVelocity, terrainNormalAt, terrainRadiusAt, type Body, type Pad } from './bodies';
 import { canSense, losBlocker } from './sense';
 import { coreOnCable, poweredAt } from './power';
 import { rotateVec, worldToBody } from './walls';
@@ -342,7 +342,8 @@ function reaverAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
     const d = Math.hypot(dx, dy);
     // approach the hover point above the pad; slow down near it
     const sp = clamp(d * 0.22, 1.5, 30);
-    const want: V2 = { x: b.vel.x + dx / (d || 1) * sp, y: b.vel.y + dy / (d || 1) * sp };
+    const sv = surfaceVelocity(b, px, py);
+    const want: V2 = { x: sv.x + dx / (d || 1) * sp, y: sv.y + dy / (d || 1) * sp };
     // avoidance only while far out: the whole point is to go down to the surface
     if (d > 110) avoidBodies(w, s, want, 1.5);
     velocityControl(w, s, want.x, want.y, 2.0, c);
@@ -465,16 +466,20 @@ function civAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
   const hx = hpos.x, hy = hpos.y;
   const dx = hx - s.pos.x, dy = hy - s.pos.y;
   const d = Math.hypot(dx, dy) || 1;
-  if (d > 6 || altC > 20) {
+  const svp = surfaceVelocity(b, hx, hy);
+  // commit to the descent once over the pad, so the approach and the descent cannot hand the ship back and forth
+  if (ai.mode === 'descend' && d > 40) ai.mode = 'travel';
+  if (ai.mode !== 'descend' && d < 8 && altC <= 20) ai.mode = 'descend';
+  if (ai.mode !== 'descend') {
     const sp = clamp(d * 0.3, 4, 32);
-    const want: V2 = { x: b.vel.x + dx / d * sp, y: b.vel.y + dy / d * sp };
+    const want: V2 = { x: svp.x + dx / d * sp, y: svp.y + dy / d * sp };
     if (d > 110) avoidBodies(w, s, want, 1.5);
     velocityControl(w, s, want.x, want.y, 1.4, c);
     return;
   }
   // descend slowly along the normal
   const n = terrainNormalAt(b, pwa);
-  const want: V2 = { x: b.vel.x - n.x * 2.2, y: b.vel.y - n.y * 2.2 };
+  const want: V2 = { x: svp.x - n.x * 2.2, y: svp.y - n.y * 2.2 };
   velocityControl(w, s, want.x, want.y, 2.0, c);
   c.turn = clamp(angleDiff(s.angle, Math.atan2(n.y, n.x)) * 3, -1, 1);
   void dt;

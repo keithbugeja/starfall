@@ -72,6 +72,15 @@ const harness = {
     const p = game.world.player;
     spawnAiShip(game.world, kind as ShipKind, 'enemy', p.pos.x + dx, p.pos.y + dy, Math.atan2(-dy, -dx), mode, null);
   },
+  /** A civilian bound for a pad (by name) from a world point. */
+  spawnCiv(kind: string, x: number, y: number, padName: string): number {
+    const w = game.world;
+    const pad = w.pads.find(q => q.name === padName);
+    const s = spawnAiShip(w, kind as ShipKind, 'civ', x, y, 0, 'travel', null);
+    s.ai!.home = pad ?? null;
+    if (pad) { s.vel.x = pad.body.vel.x; s.vel.y = pad.body.vel.y; }
+    return s.id;
+  },
   teleport(x: number, y: number, vx = 0, vy = 0, angle = 0): void {
     const p = game.world.player;
     p.pos.x = x; p.pos.y = y; p.vel.x = vx; p.vel.y = vy; p.angle = angle; p.landed = null; p.docked = null;

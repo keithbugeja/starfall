@@ -57,7 +57,7 @@ export function updateJournal(w: World, dt: number): void {
       case 'overheat': {
         if (near > 220) break;
         const base = e.text;
-        if (w.flare.active) note(w, 'guns-flare-' + base, `THE GUNS AT ${base} WENT QUIET IN THE FLARE. THE FINS COULD NOT KEEP UP.`);
+        if (w.flare.active) note(w, 'guns-flare-' + base, `THE GUNS AT ${base} WENT QUIET DURING THE FLARE. THEY HAD NOT BEEN FIRING MUCH.`);
         else if ((e.param ?? 1) > 0.3) note(w, 'guns-day-' + base, `${base}'S GUNS JAMMED AFTER A LONG BURST. IT WAS DAYLIGHT THERE.`);
         else note(w, 'guns-jam-' + base, `${base}'S GUNS JAMMED AFTER A LONG BURST.`);
         break;
@@ -77,7 +77,7 @@ export function updateJournal(w: World, dt: number): void {
         if (near > 320) break;
         if (e.text.startsWith('PLANT') && e.text.includes('ROCK')) note(w, 'crushed-' + e.text, `SOMETHING HEAVY CRACKED THE HOUSING AT ${e.text.split(' AT ')[1].split(' DESTROYED')[0]}. THE LIGHTS WENT OUT WITH IT.`);
         else if (e.text.startsWith('RADIATOR')) note(w, 'fins-' + e.text, `THE FINS AT ${e.text.split(' AT ')[1].split(' DESTROYED')[0]} CAME APART. THIN METAL.`);
-        else if (e.text.startsWith('MAST')) note(w, 'mast-' + e.text, `THE MAST AT ${e.text.split(' AT ')[1].split(' DESTROYED')[0]} IS DOWN. THE GUNS THERE SEEM SHORTER-SIGHTED NOW.`);
+        else if (e.text.startsWith('MAST')) note(w, 'mast-' + e.text, `THE MAST AT ${e.text.split(' AT ')[1].split(' DESTROYED')[0]} IS DOWN.`);
         break;
       }
       case 'civ-shot': if (near < 500) note(w, 'civ-' + e.text, `A ${e.text.split('|')[0]} WENT DOWN UNDER ${e.text.split('|')[1]}'S GUNS.`); break;
