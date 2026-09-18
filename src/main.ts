@@ -4,7 +4,7 @@ import { hashString } from './engine/math';
 import type { Controls } from './engine/input';
 import { forceEvent } from './sim/director';
 import { spawnAiShip } from './sim/ai';
-import type { EventKind, ShipKind, WeaponKind } from './sim/world';
+import { makeWeapon, type EventKind, type ShipKind, type WeaponKind } from './sim/world';
 import { applyUpgrades, installWeapon } from './sim/upgrades';
 import { damageBase } from './sim/physics';
 
@@ -53,6 +53,9 @@ const harness = {
     applyUpgrades(p);
   },
   weapon(kind: string): void { installWeapon(game.world.player, kind as WeaponKind); },
+  seekers(): void { const p = game.world.player; p.secondary = { ...makeWeapon('seeker'), ammo: 6 }; },
+  fireSecondaryNow(): void { game.input.overridePressed.add('KeyX'); },
+  raw(): unknown { return game.world; },
   nav(name: string): void {
     const w = game.world;
     const st = w.stations.find(s => s.name === name);

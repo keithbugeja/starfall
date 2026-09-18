@@ -300,6 +300,59 @@ async function autoFight(page, seconds) {
 }
 
 const moreScenarios = {
+  async events2({ page }) {
+    await api.manual(page, true);
+    // --- construction: a base gets built if nobody stops it
+    await api.newGame(page, 77);
+    await api.launch(page);
+    const pads0 = (await api.state(page)).pads.length;
+    await page.evaluate(() => window.__sf.forceEvent('construction'));
+    for (let i = 0; i < 12; i++) {
+      await api.run(page, {}, 15);
+      const st = await api.state(page);
+      const ev = st.events.find(e => e.kind === 'construction');
+      if (ev && (ev.resolved || ev.failed)) { console.log('construction ended at', st.time.toFixed(0), ev.label, 'resolved', ev.resolved, 'failed', ev.failed); break; }
+    }
+    let st = await api.state(page);
+    console.log('pads', pads0, '->', st.pads.length, 'new bases', st.pads.filter(p => p.kind === 'enemybase').map(p => p.name + '@' + p.body).join(', '));
+    await api.shot(page, 'events2_construction', 20);
+    // --- stranded: refuel by gentle contact
+    await api.newGame(page, 78);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.forceEvent('stranded'));
+    st = await api.state(page);
+    const sh = st.ships.find(s => s.kind === 'shuttle');
+    await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x + 2.2, y, vx, vy, 0), [sh.x, sh.y, sh.vx, sh.vy]);
+    await api.run(page, {}, 3);
+    st = await api.state(page);
+    const ev = st.events.find(e => e.kind === 'stranded');
+    console.log('stranded:', ev && ev.resolved ? 'RESOLVED' : 'not resolved', 'player fuel', st.player.fuel.toFixed(0), 'shuttle mode', st.ships.find(s => s.kind === 'shuttle')?.mode);
+    // --- seekers home in
+    await api.newGame(page, 79);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.seekers());
+    await page.evaluate(() => window.__sf.spawnEnemy('lancer', 120, 30, 'hunt'));
+    await page.evaluate(() => window.__sf.fireSecondaryNow());
+    await api.run(page, {}, 0.1);
+    await page.evaluate(() => window.__sf.fireSecondaryNow());
+    await api.run(page, {}, 0.1);
+    st = await api.state(page);
+    console.log('seekers fired: projectiles', st.projectiles);
+    await api.run(page, {}, 4);
+    st = await api.state(page);
+    console.log('after 4s: enemy', st.ships.filter(s => s.faction === 'enemy' && s.kind === 'lancer').map(s => 'hull ' + s.hull.toFixed(0)).join(','), 'kills', st.kills);
+    // --- flare: damage in sunlight, none when landed
+    await api.newGame(page, 80);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.forceEvent('flare'));
+    await api.run(page, {}, 30);
+    st = await api.state(page);
+    const h0 = st.player.hull;
+    await api.run(page, {}, 6);
+    st = await api.state(page);
+    console.log('flare exposed: hull', h0.toFixed(0), '->', st.player.hull.toFixed(0), 'active', st.events.find(e => e.kind === 'flare')?.label);
+    await api.shot(page, 'events2_flare', 10);
+  },
   async keys({ page }) {
     // the real input path: keyboard and mouse events through the browser
     await page.keyboard.press('Enter');
