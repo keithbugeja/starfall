@@ -387,7 +387,7 @@ export function shipBase(kind: ShipKind): { name: string; radius: number; hull: 
     case 'kestrel': return { name: 'KESTREL', radius: 1.0, hull: 100, fuel: 100, stats: createStats(), weapon: 'pulse', bounty: 0 };
     case 'wasp': return { name: 'WASP', radius: 0.8, hull: 22, fuel: 1e9, stats: createStats({ thrust: 22, turnRate: 5.5, maxSpeed: 58, retro: 6, strafe: 10 }), weapon: 'lance', bounty: 120 };
     case 'lancer': return { name: 'LANCER', radius: 1.2, hull: 60, fuel: 1e9, stats: createStats({ thrust: 16, turnRate: 3.0, maxSpeed: 52, retro: 8, strafe: 0 }), weapon: 'lance', bounty: 300 };
-    case 'reaver': return { name: 'REAVER', radius: 1.4, hull: 80, fuel: 1e9, stats: createStats({ thrust: 11, turnRate: 2.2, maxSpeed: 34, retro: 6, strafe: 6 }), weapon: 'lance', bounty: 400 };
+    case 'reaver': return { name: 'REAVER', radius: 1.4, hull: 80, fuel: 1e9, stats: createStats({ thrust: 24, turnRate: 2.6, maxSpeed: 36, retro: 9, strafe: 9 }), weapon: 'lance', bounty: 400 };
     case 'freighter': return { name: 'FREIGHTER', radius: 2.2, hull: 120, fuel: 1e9, stats: createStats({ thrust: 6, turnRate: 1.2, maxSpeed: 30, retro: 3, strafe: 2 }), weapon: 'pulse', bounty: 0 };
     case 'dreadnought': return { name: 'DREADNOUGHT', radius: 4.5, hull: 900, fuel: 1e9, stats: createStats({ thrust: 4, turnRate: 0.5, maxSpeed: 20, retro: 2, strafe: 2 }), weapon: 'mass', bounty: 3000 };
     case 'shuttle': return { name: 'SHUTTLE', radius: 0.9, hull: 30, fuel: 1e9, stats: createStats({ thrust: 10, turnRate: 2.5, maxSpeed: 40, retro: 4, strafe: 3 }), weapon: 'pulse', bounty: 0 };

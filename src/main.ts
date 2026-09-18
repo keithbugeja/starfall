@@ -2,6 +2,9 @@ import { Game } from './game/game';
 import { SIM_DT } from './sim/world';
 import { hashString } from './engine/math';
 import type { Controls } from './engine/input';
+import { forceEvent } from './sim/director';
+import { spawnAiShip } from './sim/ai';
+import type { EventKind, ShipKind } from './sim/world';
 
 const canvas = document.getElementById('gl') as HTMLCanvasElement;
 let game: Game;
@@ -26,6 +29,17 @@ const harness = {
   mode(m: string): void { game.mode = m as typeof game.mode; },
   /** Skip the title and station: put the player in flight just outside the harbour. */
   launch(): void { game.mode = 'docked'; game.launch(); },
+  forceEvent(kind: string): void { forceEvent(game.world, kind as EventKind); },
+  spawnEnemy(kind: string, dx: number, dy: number, mode = 'patrol'): void {
+    const p = game.world.player;
+    spawnAiShip(game.world, kind as ShipKind, 'enemy', p.pos.x + dx, p.pos.y + dy, Math.atan2(-dy, -dx), mode, null);
+  },
+  teleport(x: number, y: number, vx = 0, vy = 0, angle = 0): void {
+    const p = game.world.player;
+    p.pos.x = x; p.pos.y = y; p.vel.x = vx; p.vel.y = vy; p.angle = angle; p.landed = null; p.docked = null;
+    game.camPos.x = x; game.camPos.y = y; game.mode = 'flight';
+  },
+  give(credits: number): void { game.world.credits += credits; },
   nav(name: string): void {
     const w = game.world;
     const st = w.stations.find(s => s.name === name);
@@ -47,7 +61,7 @@ const harness = {
       },
       bodies: w.bodies.map(b => ({ name: b.name, kind: b.kind, x: b.pos.x, y: b.pos.y, r: b.radius, pads: b.pads.map(pd => ({ name: pd.name, kind: pd.kind, angle: pd.angle, alive: pd.alive, pop: pd.population })) })),
       stations: w.stations.map(s => ({ name: s.name, x: s.pos.x, y: s.pos.y, angle: s.angle, alive: s.alive })),
-      ships: w.ships.filter(s => s.alive).map(s => ({ kind: s.kind, faction: s.faction, x: s.pos.x, y: s.pos.y, hull: s.hull, mode: s.ai?.mode ?? null })),
+      ships: w.ships.filter(s => s.alive).map(s => ({ kind: s.kind, faction: s.faction, x: s.pos.x, y: s.pos.y, vx: s.vel.x, vy: s.vel.y, hull: s.hull, mode: s.ai?.mode ?? null, wave: s.ai?.wave ?? 0, carrying: !!s.ai?.carrying })),
       asteroids: w.asteroids.length,
       projectiles: w.projectiles.length,
       pickups: w.pickups.filter(p => p.alive).map(p => ({ kind: p.kind, x: p.pos.x, y: p.pos.y })),
@@ -58,7 +72,7 @@ const harness = {
       cam: { x: game.camPos.x, y: game.camPos.y, h: game.camHeight },
       mode: game.mode,
       nav: game.navTarget?.name ?? null,
-      pads: w.pads.map(pd => ({ name: pd.name, kind: pd.kind, body: pd.body.name, alive: pd.alive, pop: pd.population, stock: pd.stock, hp: pd.enemyHealth })),
+      pads: w.pads.map(pd => ({ name: pd.name, kind: pd.kind, body: pd.body.name, alive: pd.alive, pop: pd.population, stock: pd.stock, hp: pd.enemyHealth, angle: pd.angle, height: pd.height })),
     };
   },
 };

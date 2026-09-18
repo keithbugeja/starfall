@@ -14,6 +14,7 @@ interface DirectorState {
   nextEventId: number;
   lastEventKind: EventKind | null;
   flareCooldown: number;
+  acc: number;
 }
 
 const D = new WeakMap<World, DirectorState>();
@@ -21,7 +22,7 @@ const D = new WeakMap<World, DirectorState>();
 function state(w: World): DirectorState {
   let d = D.get(w);
   if (!d) {
-    d = { initialized: false, eventTimer: 45, trafficTimer: 20, economyTimer: 0, nextEventId: 1, lastEventKind: null, flareCooldown: 300 };
+    d = { initialized: false, eventTimer: 45, trafficTimer: 20, economyTimer: 0, nextEventId: 1, lastEventKind: null, flareCooldown: 300, acc: 0 };
     D.set(w, d);
   }
   return d;
@@ -44,8 +45,17 @@ function fromEnemyDir(w: World, target: V2): V2 {
   return { x: dx / d, y: dy / d };
 }
 
+/** The director thinks at 10 Hz; the sim runs at 120. */
 export function updateDirector(w: World, dt: number): void {
   const d = state(w);
+  d.acc += dt;
+  if (d.acc < 0.1 && d.initialized) return;
+  const step = d.acc;
+  d.acc = 0;
+  directorStep(w, step, d);
+}
+
+function directorStep(w: World, dt: number, d: DirectorState): void {
   if (!d.initialized) {
     d.initialized = true;
     for (const b of enemyBases(w)) {
@@ -144,6 +154,13 @@ function newEvent(w: World, kind: EventKind, pos: V2, label: string, timer: numb
   return e;
 }
 
+/** Test hook: force an event of a given kind now. */
+export function forceEvent(w: World, kind: EventKind): void {
+  const d = state(w);
+  if (!d.initialized) updateDirector(w, 0);
+  spawnEventOfKind(w, d, kind);
+}
+
 function spawnEvent(w: World, d: DirectorState): void {
   const pl = w.player;
   const colonies = livingColonies(w).filter(p => p.kind === 'colony' && p.population > 0);
@@ -164,6 +181,13 @@ function spawnEvent(w: World, d: DirectorState): void {
   let r = w.rng.next() * total;
   let kind: EventKind = 'salvage';
   for (const [k, v] of weights) { const vv = k === d.lastEventKind ? v * 0.3 : v; if (r < vv) { kind = k; break; } r -= vv; }
+  spawnEventOfKind(w, d, kind);
+}
+
+function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
+  const pl = w.player;
+  const colonies = livingColonies(w).filter(p => p.kind === 'colony' && p.population > 0);
+  const stations = w.stations.filter(s => s.alive);
   d.lastEventKind = kind;
   switch (kind) {
     case 'raid': {
@@ -373,9 +397,9 @@ function updateEvents(w: World, dt: number): void {
         if (target) e.pos = padPos(target, 0);
         if (reavers.length === 0) {
           const lost = (e.data.popStart as number) - target.population - w.pickups.filter(p => p.alive && p.kind === 'pod' && p.home === target).length;
-          const escapedWith = reavers.length;
-          void escapedWith;
-          if (lost <= 0) resolve(w, e, true, `RAID ON ${target.name} REPELLED. NO PODS LOST.`, target.name);
+          const playerKills = e.ships.filter(s => !s.alive && s.faction === 'enemy' && s.lastHitBy === 'player').length;
+          if (playerKills === 0) { e.reward = 0; resolve(w, e, lost <= 0, lost <= 0 ? `RAIDERS GONE FROM ${target.name}. NOTHING TAKEN.` : `RAID OVER. ${lost} POD${lost > 1 ? 'S' : ''} LOST FROM ${target.name}.`, target.name); }
+          else if (lost <= 0) resolve(w, e, true, `RAID ON ${target.name} REPELLED. NO PODS LOST.`, target.name);
           else { e.reward = Math.round(e.reward * 0.4); resolve(w, e, true, `RAID OVER. ${lost} POD${lost > 1 ? 'S' : ''} LOST FROM ${target.name}.`, target.name); }
         } else if (!carrying && reavers.every(s => s.ai?.mode === 'patrol')) {
           resolve(w, e, false, `RAIDERS WITHDRAWN FROM ${target.name}.`, target.name);

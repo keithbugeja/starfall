@@ -61,6 +61,7 @@ export interface Body {
   heatRadius: number;  // star: distance within which hull heats
   spin: number;        // visual spin only (gas giants)
   spinAngle: number;
+  maxRadius: number;   // cached max terrain radius
 }
 
 let nextBodyId = 1;
@@ -109,8 +110,10 @@ export function createBody(spec: BodySpec): Body {
     heatRadius: spec.kind === 'star' ? spec.radius * 1.9 : 0,
     spin: spec.kind === 'gas' ? 0.03 : spec.kind === 'star' ? 0.01 : 0,
     spinAngle: 0,
+    maxRadius: spec.radius,
   };
   for (let i = 0; i < segments; i++) b.terrain[i] = surfaceRadiusRaw(b, (i / segments) * TAU, 0);
+  recomputeMaxRadius(b);
   return b;
 }
 
@@ -166,6 +169,7 @@ export function addPad(b: Body, kind: PadKind, name: string, angle: number, half
   const im = (i0 - 1 + seg) % seg, ip = (i1 + 1) % seg;
   if (b.terrain[im] > maxN) b.terrain[im] = maxN;
   if (b.terrain[ip] > maxN) b.terrain[ip] = maxN;
+  recomputeMaxRadius(b);
   return pad;
 }
 
@@ -206,11 +210,13 @@ export function terrainSegmentAt(b: Body, angle: number): number {
   return Math.floor(((angle / TAU) * seg % seg + seg) % seg);
 }
 
-/** Maximum terrain radius (for broad-phase). */
-export function maxTerrainRadius(b: Body): number {
+/** Maximum terrain radius (for broad-phase). Cached. */
+export function maxTerrainRadius(b: Body): number { return b.maxRadius; }
+
+export function recomputeMaxRadius(b: Body): void {
   let m = 0;
   for (let i = 0; i < b.segments; i++) if (b.terrain[i] > m) m = b.terrain[i];
-  return m;
+  b.maxRadius = m;
 }
 
 /** Update orbital positions. Children must come after parents in the list. */

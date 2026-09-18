@@ -433,21 +433,25 @@ export class Game {
       const dir = speed > 0.5 ? { x: p.vel.x / speed, y: p.vel.y / speed } : { x: 0, y: 0 };
       tx = p.pos.x + dir.x * lead; ty = p.pos.y + dir.y * lead;
       let alt = 1e9;
+      let groundDir = { x: 0, y: 0 };
       for (const b of w.bodies) {
         if (b.kind === 'star') continue;
         const dx = p.pos.x - b.pos.x, dy = p.pos.y - b.pos.y;
         const d = Math.hypot(dx, dy);
-        if (d < maxTerrainRadius(b) + 120) {
+        if (d < maxTerrainRadius(b) + 130) {
           const a = d - terrainRadiusAt(b, Math.atan2(dy, dx));
-          if (a < alt) alt = a;
+          if (a < alt) { alt = a; groundDir = { x: -dx / (d || 1), y: -dy / (d || 1) }; }
         }
       }
       height = 58 + speed * 0.85;
-      if (alt < 70) {
-        const k = 1 - clamp(alt / 70, 0, 1);
-        height = lerp(height, 34 + alt * 0.25, k);
-        tx = lerp(tx, p.pos.x + dir.x * lead * 0.4, k);
-        ty = lerp(ty, p.pos.y + dir.y * lead * 0.4, k);
+      if (alt < 110) {
+        const k = 1 - clamp(alt / 110, 0, 1);
+        // frame both the ship and the ground: look part-way toward the surface, zoom to fit
+        const toward = Math.min(alt * 0.5, 45);
+        tx = lerp(tx, p.pos.x + dir.x * lead * 0.3 + groundDir.x * toward, k);
+        ty = lerp(ty, p.pos.y + dir.y * lead * 0.3 + groundDir.y * toward, k);
+        const fit = clamp(alt * 0.95 + 32, 36, 125);
+        height = lerp(height, Math.max(fit, 36 + speed * 0.4), k);
         tiltTarget = lerp(0.3, 0.06, k);
       }
       // near a station: frame it
@@ -530,7 +534,7 @@ export class Game {
       const hit = st.siege > 0 ? 0.3 + 0.3 * Math.sin(w.time * 8) : 0;
       mesh.add(m, 1 + hit, 1, 1, 0);
     }
-    this.meshes.flush(cam.viewProj, [star.pos.x, 0, -star.pos.y], [cam.eye[0], cam.eye[1], cam.eye[2]], 0.16);
+    this.meshes.flush(cam.viewProj, [star.pos.x, 0, -star.pos.y], [cam.eye[0], cam.eye[1], cam.eye[2]], 0.22);
 
     // ---- vector layer
     this.post.beginVector();

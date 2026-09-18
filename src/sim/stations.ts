@@ -27,10 +27,10 @@ export function createStation(w: World, spec: StationSpec): Station {
     pos: { x: 0, y: 0 },
     vel: { x: 0, y: 0 },
     angle: w.rng.next() * TAU,
-    spin: spec.spin ?? 0.32,
+    spin: spec.spin ?? 0.2,
     radius: R,
     bayDepth: R * 0.32,           // hub radius
-    bayHalfWidth: segAngle * 1.5, // gap half-angle: three ring segments removed
+    bayHalfWidth: segAngle * 2.0, // gap half-angle: four ring segments removed
     orbit: { parent: spec.parent, radius: spec.orbitRadius, angularSpeed: TAU / spec.period, phase: spec.phase },
     kind: spec.kind,
     alive: true,
@@ -120,11 +120,10 @@ export function stationContact(w: World, s: Ship, st: Station): boolean {
     const angularMargin = (s.radius * 0.8) / R;
     const inGap = Math.abs(local) < st.bayHalfWidth - angularMargin;
     if (!inGap) {
-      // push out to the nearer side
+      // push back to the side the ship came from (never let it phase through the ring)
       const toInner = d - inner, toOuter = outer - d;
-      let sign = toInner < toOuter ? -1 : 1;
-      // pylons at the gap edges: if we're near the gap edge, push sideways instead
-      const pen = Math.min(toInner, toOuter);
+      const sign = d >= R ? 1 : -1;
+      const pen = sign > 0 ? toOuter : toInner;
       s.pos.x += nx * sign * pen; s.pos.y += ny * sign * pen;
       const vn = rvx * nx + rvy * ny;
       // ring surface velocity (rotation) for tangential friction feel

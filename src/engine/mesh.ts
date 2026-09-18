@@ -104,7 +104,7 @@ void main() {
   float lit = ndl > 0.55 ? 1.0 : (ndl > 0.18 ? 0.70 : (ndl > -0.08 ? 0.42 : 0.20));
   // a faint camera-side fill so the night side is not invisible
   vec3 V = normalize(u_camPos - v_wpos);
-  float fill = max(dot(v_nrm, V), 0.0) * 0.08;
+  float fill = max(dot(v_nrm, V), 0.0) * 0.12;
   vec3 c = v_col * (lit * (1.0 - u_ambient) + u_ambient + fill);
   c = mix(c, v_col, v_emis);
   o_col = vec4(c, 1.0);

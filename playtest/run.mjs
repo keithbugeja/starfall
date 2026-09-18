@@ -203,6 +203,188 @@ const scenarios = {
   },
 };
 
+
+/** In-page docking autopilot: approach the station, wait for the gap, run in. */
+const DOCK_SRC = `
+  const w = sf.game.world, p = w.player;
+  const st = w.stations.find(s => s.name === name);
+  const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+  const log = [];
+  let phase = 'approach';
+  for (let t = 0; t < ticks; t++) {
+    if (!p.alive || p.docked) break;
+    const dx = st.pos.x - p.pos.x, dy = st.pos.y - p.pos.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const R = st.radius;
+    let gx = 0, gy = 0;
+    for (const bb of w.bodies) {
+      const ex = bb.pos.x - p.pos.x, ey = bb.pos.y - p.pos.y;
+      const dd = Math.hypot(ex, ey);
+      if (dd >= bb.soi) continue;
+      let a = bb.mass / Math.max(dd, bb.radius * 0.6) ** 2;
+      const f = Math.max(0, Math.min(1, (bb.soi - dd) / (bb.soi * 0.25)));
+      a *= f * f * (3 - 2 * f);
+      gx += ex / dd * a; gy += ey / dd * a;
+    }
+    const local = wrap(Math.atan2(p.pos.y - st.pos.y, p.pos.x - st.pos.x) - st.angle);
+    let wantVx, wantVy;
+    if (phase === 'approach') {
+      // hold point at 1.8R on our bearing
+      const hx = st.pos.x - dx / d * R * 1.8, hy = st.pos.y - dy / d * R * 1.8;
+      wantVx = st.vel.x + (hx - p.pos.x) * 0.5; wantVy = st.vel.y + (hy - p.pos.y) * 0.5;
+      const sp = Math.hypot(wantVx, wantVy); if (sp > 30) { wantVx *= 30 / sp; wantVy *= 30 / sp; }
+      const holdErr = Math.hypot(hx - p.pos.x, hy - p.pos.y);
+      // the gap must be coming toward our bearing: station spins at st.spin, so lead it
+      const lead = local - st.spin * 2.0;
+      if (holdErr < 4 && Math.abs(lead) < st.bayHalfWidth * 0.35) phase = 'run';
+    } else {
+      wantVx = st.vel.x + dx / d * 6.8; wantVy = st.vel.y + dy / d * 6.8;
+    }
+    const ax = (wantVx - p.vel.x) * 1.6 - gx, ay = (wantVy - p.vel.y) * 1.6 - gy;
+    const am = Math.hypot(ax, ay);
+    const wantHeading = am > 0.3 ? Math.atan2(ay, ax) : Math.atan2(dy, dx);
+    const hErr = wrap(wantHeading - p.angle);
+    const c = { turn: Math.max(-1, Math.min(1, hErr * 3.0)), thrust: 0, retro: 0, strafe: 0, fire: false, boost: false };
+    if (Math.abs(hErr) < 0.35 && am > 0.3) c.thrust = Math.min(1, am / p.stats.thrust);
+    sf.controls(c);
+    sf.step(1);
+    if (t % 120 === 0) log.push({ t: (t / 120).toFixed(0), phase, d: d.toFixed(1), local: local.toFixed(2), rel: Math.hypot(p.vel.x - st.vel.x, p.vel.y - st.vel.y).toFixed(1), hull: p.hull.toFixed(0) });
+  }
+  sf.controls(null);
+  return { log, docked: !!p.docked, hull: p.hull, alive: p.alive, time: w.time, dmg: p.lastDamageSource, dmgAt: p.lastDamageTime };
+`;
+
+async function autoDock(page, name, seconds) {
+  return page.evaluate(([src, name, ticks]) => {
+    const f = new Function('sf', 'name', 'ticks', src);
+    return f(window.__sf, name, ticks);
+  }, [DOCK_SRC, name, Math.round(seconds * 120)]);
+}
+
+/** In-page dogfight controller: face the nearest enemy's lead point and fire; thrust to keep range. */
+const FIGHT_SRC = `
+  const w = sf.game.world, p = w.player;
+  const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+  const log = [];
+  let kills0 = w.kills;
+  for (let t = 0; t < ticks; t++) {
+    if (!p.alive) break;
+    let best = null, bd = 1e9;
+    for (const s of w.ships) { if (!s.alive || s.faction !== 'enemy' || s.kind === 'sentinel') continue; const d = Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y); if (d < bd) { bd = d; best = s; } }
+    const c = { turn: 0, thrust: 0, retro: 0, strafe: 0, fire: false, boost: false };
+    if (best) {
+      const dx = best.pos.x - p.pos.x, dy = best.pos.y - p.pos.y;
+      const tt = bd / p.weapon.speed;
+      const lx = dx + (best.vel.x - p.vel.x) * tt, ly = dy + (best.vel.y - p.vel.y) * tt;
+      const aim = Math.atan2(ly, lx);
+      const err = wrap(aim - p.angle);
+      c.turn = Math.max(-1, Math.min(1, err * 4));
+      c.fire = Math.abs(err) < 0.12 && bd < 120;
+      const sp = Math.hypot(p.vel.x, p.vel.y);
+      if (bd > 70 && Math.abs(err) < 0.3 && sp < 30) c.thrust = 1;
+    }
+    sf.controls(c);
+    sf.step(1);
+    if (t % 240 === 0) log.push({ t: (t / 120).toFixed(0), hull: p.hull.toFixed(0), enemies: w.ships.filter(s => s.alive && s.faction === 'enemy' && s.kind !== 'sentinel').length, kills: w.kills - kills0, modes: w.ships.filter(s => s.alive && s.faction === 'enemy' && s.kind !== 'sentinel').map(s => s.kind[0] + ':' + s.ai.mode).join(' ') });
+  }
+  sf.controls(null);
+  return { log, hull: p.hull, alive: p.alive, kills: w.kills - kills0 };
+`;
+
+async function autoFight(page, seconds) {
+  return page.evaluate(([src, ticks]) => {
+    const f = new Function('sf', 'ticks', src);
+    return f(window.__sf, ticks);
+  }, [FIGHT_SRC, Math.round(seconds * 120)]);
+}
+
+const moreScenarios = {
+  async dock({ page }) {
+    await api.manual(page, true);
+    let ok = 0, n = 0;
+    for (const seed of [12345, 777, 4242]) {
+      await api.newGame(page, seed);
+      await api.launch(page);
+      // start 90 units from the harbour on the side away from its planet
+      let st = await api.state(page);
+      const hs = st.stations[0];
+      const home = st.bodies.find(b => b.kind === 'planet');
+      const ax = hs.x - home.x, ay = hs.y - home.y, al = Math.hypot(ax, ay);
+      await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [hs.x + ax / al * 90, hs.y + ay / al * 90]);
+      st = await api.state(page);
+      const harbour = st.stations[0].name;
+      const res = await autoDock(page, harbour, 120);
+      n++; if (res.docked) ok++;
+      console.log(seed, harbour, '=>', res.docked ? 'DOCKED' : (res.alive ? 'NOT DOCKED' : 'DEAD'), 'hull', res.hull.toFixed(0), 'time', res.time.toFixed(0), 'dmg', res.dmg, 'at', res.dmgAt.toFixed(1));
+      if (!res.docked || res.hull < 100) console.log(res.log.slice(-10));
+      await api.shot(page, 'dock_' + seed);
+    }
+    console.log('DOCK SUCCESS', ok, '/', n);
+  },
+  async combat({ page }) {
+    await api.manual(page, true);
+    for (const wave of [['wasp', 'wasp'], ['lancer'], ['wasp', 'wasp', 'lancer'], ['reaver']]) {
+      await api.newGame(page, 999);
+      await api.launch(page);
+      // put the player in open space away from the harbour and the star
+      const st = await api.state(page);
+      const home = st.bodies.find(b => b.kind === 'planet');
+      await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [home.x + 900, home.y + 200]);
+      for (let i = 0; i < wave.length; i++) await page.evaluate(([k, i]) => window.__sf.spawnEnemy(k, 120 + i * 20, 60 - i * 40, 'hunt'), [wave[i], i]);
+      const res = await autoFight(page, 60);
+      console.log('WAVE', wave.join('+'), '=>', res.alive ? 'ALIVE' : 'DEAD', 'hull', res.hull.toFixed(0), 'kills', res.kills);
+      console.log(res.log);
+      await api.shot(page, 'combat_' + wave.join('_'));
+    }
+  },
+  async raid({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, 31337);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.forceEvent('raid'));
+    for (let i = 0; i < 14; i++) {
+      await api.run(page, {}, 5);
+      const st = await api.state(page);
+      const ev = st.events[0];
+      const reavers = st.ships.filter(s => s.kind === 'reaver');
+      const pad = st.pads.find(p => ev.label.includes(p.name));
+      const pb = pad ? st.bodies.find(b => b.name === pad.body) : null;
+      const rv = reavers[0];
+      const dist = rv && pb ? Math.hypot(rv.x - (pb.x + Math.cos(pad.angle) * (pad.height + 9)), rv.y - (pb.y + Math.sin(pad.angle) * (pad.height + 9))).toFixed(1) : '-';
+      console.log(`t=${st.time.toFixed(0)} ${ev.label} timer=${ev.timer.toFixed(0)} res=${ev.resolved} fail=${ev.failed} reavers=${reavers.map(r => r.mode + '/' + r.wave.toFixed(1) + (r.carrying ? '/POD' : '')).join(',')} dHover~${dist} spd=${rv ? Math.hypot(rv.vx, rv.vy).toFixed(1) : '-'} pods=${st.pickups.filter(p => p.kind === 'pod').length} pop=${st.pads.filter(p => p.kind === 'colony').map(p => p.pop).join('/')}`);
+      if (ev.resolved || ev.failed) break;
+    }
+    const st = await api.state(page);
+    console.log(st.comms);
+  },
+  async approach({ page }) {
+    // fly to the home planet's surface and take screenshots at several altitudes
+    await api.manual(page, true);
+    await api.newGame(page, 12345);
+    await api.launch(page);
+    const st = await api.state(page);
+    const home = st.bodies.find(b => b.kind === 'planet');
+    const pad = home.pads[0];
+    const ang = pad.angle;
+    const alts = [140, 60, 25, 8];
+    for (const alt of alts) {
+      const r = home.r + alt;
+      await page.evaluate(([x, y, a]) => window.__sf.teleport(x, y, 0, 0, a), [home.x + Math.cos(ang) * r, home.y + Math.sin(ang) * r, ang]);
+      await api.run(page, { thrust: 0 }, 0.5);
+      await api.shot(page, 'approach_' + alt, 90);
+    }
+    // gas giant and the star from a distance
+    const gas = st.bodies.find(b => b.kind === 'gas');
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [gas.x + gas.r + 60, gas.y]);
+    await api.run(page, {}, 0.5);
+    await api.shot(page, 'approach_gas', 90);
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [st.bodies[0].r + 300, 0]);
+    await api.run(page, {}, 0.5);
+    await api.shot(page, 'approach_star', 90);
+  },
+};
+Object.assign(scenarios, moreScenarios);
+
 const { browser, page, errors } = await launch();
 try {
   const fn = scenarios[scenario];

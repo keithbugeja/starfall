@@ -158,14 +158,34 @@ export function generateSystem(seed: number, seedName: string): World {
   for (const b of w.bodies) for (const p of b.pads) w.pads.push(p);
 
   // ---------------- stations
-  const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: home.body.radius * 3.4, period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
+  /** Pick a station orbit radius around a parent that stays clear of its moons' orbits. */
+  const clearOrbit = (parent: Body, wanted: number): number => {
+    const moons = w.bodies.filter(b => b.kind === 'moon' && b.orbit && b.orbit.parent === parent);
+    const minR = parent.maxRadius + 70;
+    let r = Math.max(wanted, minR);
+    for (let i = 0; i < 6; i++) {
+      let moved = false;
+      for (const m of moons) {
+        const mr = m.orbit!.radius;
+        const gap = m.maxRadius + 95;
+        if (Math.abs(r - mr) < gap) {
+          // prefer the inside of the moon's orbit (closer to port), else outside
+          r = (mr - gap >= minR) ? mr - gap : mr + gap;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    return r;
+  };
+  const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: clearOrbit(home.body, home.body.radius * 2.4), period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
   harbour.upgrades = ['retro', 'strafe', 'struts', 'tank', 'armour', 'scatter', 'mass', 'seeker', 'sensors', 'cargo'];
   const refineryHost = gas.moons.length ? gas.body : mid.body;
-  const refinery = createStation(w, { name: names.station('refinery', refineryHost.name), kind: 'refinery', parent: refineryHost, orbitRadius: refineryHost.radius * (refineryHost.kind === 'gas' ? 2.6 : 3.2), period: 1000 + rng.int(300), phase: rng.next() * TAU, radius: 12, spin: 0.38 });
+  const refinery = createStation(w, { name: names.station('refinery', refineryHost.name), kind: 'refinery', parent: refineryHost, orbitRadius: clearOrbit(refineryHost, refineryHost.radius * (refineryHost.kind === 'gas' ? 2.4 : 3.2)), period: 1000 + rng.int(300), phase: rng.next() * TAU, radius: 12, spin: 0.27 });
   refinery.upgrades = ['engine', 'tank', 'cargo', 'armour', 'retro', 'mass', 'heatshield', 'tractor', 'struts'];
   refinery.orePrice = 42; refinery.salvagePrice = 40;
   const researchHost = outer ? outer.body : enemy.body === plans[plans.length - 2].body ? mid.body : enemy.body;
-  const research = createStation(w, { name: names.station('research', researchHost === enemy.body ? 'FAR' : researchHost.name), kind: 'research', parent: researchHost === enemy.body ? mid.body : researchHost, orbitRadius: (researchHost === enemy.body ? mid.body : researchHost).radius * 4.0, period: 1100 + rng.int(300), phase: rng.next() * TAU, radius: 11, spin: -0.3 });
+  const research = createStation(w, { name: names.station('research', researchHost === enemy.body ? 'FAR' : researchHost.name), kind: 'research', parent: researchHost === enemy.body ? mid.body : researchHost, orbitRadius: clearOrbit(researchHost === enemy.body ? mid.body : researchHost, (researchHost === enemy.body ? mid.body : researchHost).radius * 4.0), period: 1100 + rng.int(300), phase: rng.next() * TAU, radius: 11, spin: -0.22 });
   research.upgrades = ['gravdamp', 'sensors', 'rail', 'tractor', 'heatshield', 'strafe', 'seeker'];
   research.salvagePrice = 60;
   w.respawnStation = harbour;
@@ -187,10 +207,12 @@ export function generateSystem(seed: number, seedName: string): World {
       ast.rich = rng.chance(0.12);
     }
   }
-  // dense cluster near the home world's outer moon orbit (mining ground, and a hazard on approach)
+  // dense cluster beyond the home world's moons and harbour (mining ground, and a hazard on approach)
   {
     const b = home.body;
-    const cr = b.radius * 4.2 + 60;
+    let outer = harbour.orbit!.radius;
+    for (const m of home.moons) outer = Math.max(outer, m.orbit!.radius + m.maxRadius);
+    const cr = outer + 170;
     for (let i = 0; i < 34; i++) {
       const a = rng.next() * TAU;
       const r = cr + (rng.next() - 0.5) * 90;
@@ -208,6 +230,8 @@ export function generateSystem(seed: number, seedName: string): World {
     const ast = createAsteroid(w, fault.pos.x + Math.cos(a) * r, fault.pos.y + Math.sin(a) * r, fault.vel.x - Math.sin(a) * v, fault.vel.y + Math.cos(a) * v, rng.next() < 0.5 ? 2 : 1, 3);
     ast.rich = rng.chance(0.6);
   }
+  // nothing starts inside a body
+  w.asteroids = w.asteroids.filter(a => w.bodies.every(b => Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) > b.maxRadius + a.radius + 3));
   // unique module orbiting the Fault
   {
     const a = rng.next() * TAU, r = 48;

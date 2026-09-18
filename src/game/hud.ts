@@ -125,7 +125,7 @@ export function drawFlightHud(g: Game): void {
     const err = Math.abs(angleDiff(p.angle, Math.atan2(n.y, n.x)));
     const tol = p.stats.landTol;
     const okVn = vn < LAND_VN * tol, okVt = vt < LAND_VT * tol, okA = err < LAND_ANG * tol;
-    const cx = W / 2, cy = Hh - 60 * s;
+    const cx = W / 2, cy = Hh - 168 * s;
     drawText(H, 'LANDING', cx, cy - 34 * s, 10 * s, C.amber[0], C.amber[1], C.amber[2], 0.8, 'center');
     const c1 = okVn ? C.green : C.red, c2 = okVt ? C.green : C.red, c3 = okA ? C.green : C.red;
     drawText(H, `DOWN ${vn.toFixed(1)}`, cx - 92 * s, cy - 16 * s, 12 * s, c1[0], c1[1], c1[2], 0.95, 'center');
@@ -137,14 +137,14 @@ export function drawFlightHud(g: Game): void {
   if (p.landed) {
     const pad = p.landed.pad;
     const name = pad ? pad.name : p.landed.body.name + ' SURFACE';
-    drawText(H, `LANDED: ${name}`, W / 2, Hh - 92 * s, 13 * s, C.green[0], C.green[1], C.green[2], 0.95, 'center');
+    drawText(H, `LANDED: ${name}`, W / 2, Hh - 204 * s, 13 * s, C.green[0], C.green[1], C.green[2], 0.95, 'center');
     let line2 = 'THRUST TO LAUNCH';
     if (pad && pad.alive) {
       if (pad.kind === 'colony') line2 = `REFUELLING AND REPAIRING  ·  POPULATION ${pad.population}  ·  THRUST TO LAUNCH`;
       else if (pad.kind === 'mine') line2 = `REFUELLING  ·  LOADING ORE (${pad.stock} IN STOCK)  ·  THRUST TO LAUNCH`;
       else if (pad.kind === 'derelict') line2 = pad.stock > 0 ? 'SALVAGE CREW WORKING...' : 'STRIPPED  ·  THRUST TO LAUNCH';
     }
-    drawText(H, line2, W / 2, Hh - 72 * s, 9 * s, C.green[0], C.green[1], C.green[2], 0.7, 'center');
+    drawText(H, line2, W / 2, Hh - 184 * s, 9 * s, C.green[0], C.green[1], C.green[2], 0.7, 'center');
   }
 
   // ---------------- warnings centre-top
@@ -169,8 +169,12 @@ export function drawFlightHud(g: Game): void {
     const age = t - c.time;
     const a = clamp(1.3 - age / 14, 0, 1);
     if (a <= 0) continue;
-    const size = c.priority >= 3 ? 11 : 10;
-    drawText(H, `${c.from}: ${c.text}`, 24 * s, y, size * s, c.color[0], c.color[1], c.color[2], a * 0.9);
+    let size = c.priority >= 3 ? 11 : 10;
+    const txt = `${c.from}: ${c.text}`;
+    const maxW = W - 430 * s;
+    const tw = textWidth(txt, size * s);
+    if (tw > maxW) size *= maxW / tw;
+    drawText(H, txt, 24 * s, y, size * s, c.color[0], c.color[1], c.color[2], a * 0.9);
     y += (size + 5) * s;
   }
 

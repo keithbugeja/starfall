@@ -299,24 +299,29 @@ function reaverAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
   if (ai.mode === 'raid' && pad) {
     const b = pad.body;
     if (!pad.alive || pad.population <= 0) { ai.mode = 'escape'; return; }
-    const px = b.pos.x + Math.cos(pad.angle) * (pad.height + 9), py = b.pos.y + Math.sin(pad.angle) * (pad.height + 9);
+    // come in high over the pad first, then straight down: never skim the terrain around it
+    const arc = Math.abs(angleDiff(Math.atan2(s.pos.y - b.pos.y, s.pos.x - b.pos.x), pad.angle)) * b.radius;
+    const alt = arc > 18 ? 70 : 9;
+    const px = b.pos.x + Math.cos(pad.angle) * (pad.height + alt), py = b.pos.y + Math.sin(pad.angle) * (pad.height + alt);
     const dx = px - s.pos.x, dy = py - s.pos.y;
     const d = Math.hypot(dx, dy);
     // approach the hover point above the pad; slow down near it
-    const sp = clamp(d * 0.35, 3, 34);
+    const sp = clamp(d * 0.22, 1.5, 30);
     const want: V2 = { x: b.vel.x + dx / (d || 1) * sp, y: b.vel.y + dy / (d || 1) * sp };
-    if (d > 30) avoidBodies(w, s, want, 1.5);
-    velocityControl(w, s, want.x, want.y, 1.5, c);
-    if (d < 4) {
-      ai.timer += dt * 2; // counts up while hovering
-      if (ai.timer > 5) {
+    // avoidance only while far out: the whole point is to go down to the surface
+    if (d > 110) avoidBodies(w, s, want, 1.5);
+    velocityControl(w, s, want.x, want.y, 2.0, c);
+    // hover counter (ai.wave) fills while close to the lift point
+    if (d < 5) ai.wave += dt; else ai.wave = Math.max(0, ai.wave - dt * 0.5);
+    if (ai.wave > 4) {
+      {
         // lift a pod
         pad.population = Math.max(0, pad.population - 1);
         const pod = spawnPickup(w, 'pod', s.pos.x, s.pos.y, s.vel.x, s.vel.y, 0, pad, 'POD');
         pod.carriedBy = s;
         ai.carrying = pod;
         ai.mode = 'escape';
-        ai.timer = 0;
+        ai.timer = 0; ai.wave = 0;
         sfx(w, 'alarm', s.pos, 0.8);
         comm(w, pad.name, `REAVER HAS LIFTED A POD FROM ${pad.name}! SHOOT IT DOWN!`, [1, 0.5, 0.3], 3, s.pos);
       }
@@ -332,7 +337,7 @@ function reaverAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void
     const bv = b ? b.vel : { x: 0, y: 0 };
     const sp = clamp(d * 0.3, 2, 34);
     const want: V2 = { x: bv.x + dx / d * sp, y: bv.y + dy / d * sp };
-    if (d > 30) avoidBodies(w, s, want, 1.5);
+    if (d > 110) avoidBodies(w, s, want, 1.5);
     velocityControl(w, s, want.x, want.y, 1.5, c);
     return;
   }
@@ -418,13 +423,15 @@ function civAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
   const pad = dest as Pad;
   const b = pad.body;
   if (s.landed) { ai.timer -= 0; if (ai.timer < -20) s.alive = false; return; } // delivered: wait then vanish
-  const hx = b.pos.x + Math.cos(pad.angle) * (pad.height + 20), hy = b.pos.y + Math.sin(pad.angle) * (pad.height + 20);
+  const arcC = Math.abs(angleDiff(Math.atan2(s.pos.y - b.pos.y, s.pos.x - b.pos.x), pad.angle)) * b.radius;
+  const altC = arcC > 18 ? 70 : 20;
+  const hx = b.pos.x + Math.cos(pad.angle) * (pad.height + altC), hy = b.pos.y + Math.sin(pad.angle) * (pad.height + altC);
   const dx = hx - s.pos.x, dy = hy - s.pos.y;
   const d = Math.hypot(dx, dy) || 1;
-  if (d > 6) {
+  if (d > 6 || altC > 20) {
     const sp = clamp(d * 0.3, 4, 32);
     const want: V2 = { x: b.vel.x + dx / d * sp, y: b.vel.y + dy / d * sp };
-    if (d > 40) avoidBodies(w, s, want, 1.5);
+    if (d > 110) avoidBodies(w, s, want, 1.5);
     velocityControl(w, s, want.x, want.y, 1.4, c);
     return;
   }
