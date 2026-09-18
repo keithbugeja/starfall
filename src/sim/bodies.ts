@@ -65,6 +65,10 @@ export interface Body {
   meshIndex: number;   // filled by the renderer
   seed: number;
   heatRadius: number;  // star: distance within which hull heats
+  warmRadius: number;  // star: distance within which weapons run hot
+  farMass: number;     // star: the weak field beyond its near zone that the planets' rails obey
+  faceParent: boolean; // rails hulls that keep one face toward what they orbit (a vane toward the star)
+  secret: boolean;     // unnamed on the map and in the world until the pilot has been there or pinged it
   spin: number;        // visual spin only (gas giants)
   spinAngle: number;
   maxRadius: number;   // cached max terrain radius
@@ -116,6 +120,8 @@ export interface BodySpec {
   inertia?: number;
   hollow?: boolean;
   tetherable?: boolean;
+  faceParent?: boolean;
+  secret?: boolean;
   profile?: (angle: number) => number; // custom radius profile (hulls)
   segments?: number;
   spin?: number;       // rad/s for bodies whose terrain turns (day and night)
@@ -132,7 +138,7 @@ export function createBody(spec: BodySpec): Body {
     vel: { x: 0, y: 0 },
     radius: spec.radius,
     mass: spec.surfaceG * spec.radius * spec.radius,
-    soi: spec.radius * (spec.soiMul ?? (spec.kind === 'moon' ? 4.5 : 7)),
+    soi: spec.radius * (spec.soiMul ?? (spec.kind === 'moon' ? 4.5 : spec.kind === 'star' ? 3.5 : 7)),
     surfaceG: spec.surfaceG,
     roughness: spec.roughness ?? 0,
     segments,
@@ -145,6 +151,10 @@ export function createBody(spec: BodySpec): Body {
     meshIndex: -1,
     seed: spec.seed,
     heatRadius: spec.kind === 'star' ? spec.radius * 1.9 : 0,
+    warmRadius: spec.kind === 'star' ? spec.radius * 5.2 : 0,
+    farMass: 0,
+    faceParent: spec.faceParent ?? false,
+    secret: spec.secret ?? false,
     spin: spec.spin ?? (spec.kind === 'gas' ? 0.03 : spec.kind === 'star' ? 0.01 : 0),
     spinAngle: 0,
     maxRadius: spec.radius,
@@ -304,6 +314,7 @@ export function updateOrbits(bodies: Body[], time: number, dt: number): void {
       const ny = b.orbit.parent.pos.y + Math.sin(a) * b.orbit.radius;
       if (dt > 0) { b.vel.x = (nx - b.pos.x) / dt; b.vel.y = (ny - b.pos.y) / dt; }
       b.pos.x = nx; b.pos.y = ny;
+      if (b.faceParent) { b.spinAngle = a + Math.PI; continue; }
     }
     b.spinAngle += b.spin * dt;
   }
@@ -315,13 +326,15 @@ export function gravityFrom(b: Body, x: number, y: number, out: V2): number {
   const dx = b.pos.x - x, dy = b.pos.y - y;
   const r2 = dx * dx + dy * dy;
   const soi2 = b.soi * b.soi;
-  if (r2 >= soi2) { out.x = 0; out.y = 0; return 0; }
+  if (r2 >= soi2 && b.farMass <= 0) { out.x = 0; out.y = 0; return 0; }
   const r = Math.sqrt(r2);
   // inside the body (fissures, caves) the pull weakens toward the centre like a uniform sphere
   let a = r < b.radius ? (b.mass / (b.radius * b.radius)) * (r / b.radius) : b.mass / r2;
   // fade to zero over the outer 25% of the SOI so there is no discontinuity
-  const fade = 1 - smoothstep(b.soi * 0.75, b.soi, r);
+  const fade = r2 >= soi2 ? 0 : 1 - smoothstep(b.soi * 0.75, b.soi, r);
   a *= fade;
+  // the star's far field: weak, unfaded, and what every planet's rail obeys, so free things keep station with them
+  if (b.farMass > 0) a += b.farMass / r2;
   const inv = r > 1e-6 ? 1 / r : 0;
   out.x = dx * inv * a;
   out.y = dy * inv * a;

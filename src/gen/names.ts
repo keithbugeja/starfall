@@ -8,7 +8,7 @@ const WORLD_A = ['HAL', 'KES', 'MOR', 'VAL', 'TER', 'ORO', 'NIM', 'CAL', 'SAR', 
 const WORLD_B = ['DANE', 'SEL', 'ROW', 'ANTH', 'MIN', 'VAR', 'BUS', 'DRA', 'GATH', 'ISH', 'KOR', 'LUND', 'MERE', 'NOX', 'PHOS', 'RIS', 'TOK', 'VEN', 'WICK', 'ZAN'];
 const WORLD_C = ['', '', '', ' II', ' PRIME', ' MINOR', ' MAJOR', ' DEEP'];
 
-const MOON_NAMES = ['VESPER', 'CINDER', 'ASH', 'MOTE', 'PALE', 'HOLLOW', 'SLATE', 'BRINE', 'LANTERN', 'SHARD', 'KNELL', 'RIME', 'DUSK', 'CAIRN', 'FLINT', 'MARROW', 'SHOAL', 'THORN', 'WISP', 'EMBER'];
+const MOON_NAMES = ['VESPER', 'CINDER', 'ASH', 'MOTE', 'PALE', 'SLATE', 'BRINE', 'LANTERN', 'SHARD', 'KNELL', 'RIME', 'DUSK', 'CAIRN', 'FLINT', 'MARROW', 'SHOAL', 'THORN', 'WISP', 'EMBER'];
 
 const COLONY_SUFFIX = ['PORT', 'LANDING', 'STATION', 'HOLD', 'REACH', 'CAMP', 'DOWN', 'FIELD', 'HAVEN', 'CROSS'];
 const COLONY_PREFIX = ['NEW', 'FORT', 'PORT', 'OLD', 'HIGH', 'LOW', 'FAR', 'EAST', 'WEST', 'NORTH'];

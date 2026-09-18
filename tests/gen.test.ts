@@ -69,9 +69,10 @@ describe('system generation', () => {
         const d = Math.hypot(w.player.pos.x - b.pos.x, w.player.pos.y - b.pos.y);
         expect(d).toBeGreaterThan(maxTerrainRadius(b) + 2);
       }
-      // terrain radii are finite and within bounds
+      // terrain radii are finite and within bounds (hulls have their own shapes)
       for (const b of w.bodies) for (let i = 0; i < b.segments; i++) {
         expect(Number.isFinite(b.terrain[i])).toBe(true);
+        if (b.kind === 'hull') continue;
         expect(b.terrain[i]).toBeGreaterThan(b.radius * 0.6);
         expect(b.terrain[i]).toBeLessThan(b.radius * 1.4);
       }
@@ -79,14 +80,21 @@ describe('system generation', () => {
       const bases = w.pads.filter(p => p.kind === 'enemybase' || p.kind === 'core');
       for (const p of bases) {
         expect(p.mast && p.mast.alive).toBeTruthy();
-        expect(p.radiator && p.radiator.alive).toBeTruthy();
+        if (p.name !== 'THE RELAY') expect(p.radiator && p.radiator.alive).toBeTruthy(); else expect(p.radiator).toBeNull();
         const grid = w.power.some(src => src.body === p.body && src.range === Infinity);
         if (grid) expect(p.plant).toBeNull(); else expect(p.plant && p.plant.alive).toBeTruthy();
       }
       const kiln = w.pads.find(p => p.name === 'THE KILN');
       expect(kiln).toBeTruthy();
       expect(kiln!.guns).toBe(2);
-      for (const src of w.power) expect(src.powered && src.core && src.core.alive).toBeTruthy();
+      for (const src of w.power) { if (src.name === 'THE LIGHTHOUSE') { expect(src.core).toBeNull(); continue; } expect(src.powered && src.core && src.core.alive).toBeTruthy(); }
+      // the authored places exist and are unnamed until found
+      for (const name of ['THE SLIPWAY', 'THE LIGHTHOUSE', 'HOLLOW']) { const b = w.bodies.find(x => x.name === name)!; expect(b).toBeTruthy(); expect(b.secret).toBe(true); }
+      expect(w.pads.find(p => p.name === 'THE RELAY')!.guns).toBe(0);
+      expect(w.pads.filter(p => p.kind === 'colony').length).toBe(4);
+      expect(w.bodies.filter(b => b.kind === 'planet' && b.name !== 'THE FAULT' && b.name !== 'HOLLOW').length + w.bodies.filter(b => b.kind === 'gas').length).toBe(5);
+      // the star's rails: every planet's period follows the far field
+      for (const b of w.bodies) if (b.orbit && b.orbit.parent === w.star && b.kind !== 'hull') expect(Math.abs(b.orbit.angularSpeed - Math.sqrt(w.star.farMass / (b.orbit.radius ** 3)))).toBeLessThan(1e-9);
       // structures stand on the surface, outside every pad's flat chord
       for (const st of w.structures) {
         const b = st.body;

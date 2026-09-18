@@ -65,6 +65,9 @@ Back opens the map.
 - The halo around your ship is how loud you are. Brackets around it mean something has you; the tone
   that falls is the moment nothing does. Things in shadow look dark and cool faster.
 - The journal (J) records what you saw, never what it means.
+- The system is a small set of places, the same places every game with different names and faces. Some
+  are on the map. Some you have to notice: a shape in orbit near the harbour, a station near the star,
+  a mast blinking on a dark moon, a trail of wreckage in the belt, a large silent hull falling.
 - Three hand-built situations exist in every system. They are not marked. Look for a crack in the
   enemy world, a large silent hull that arrives on a bad course, and a signal you can hear before
   you can see it. A fourth, a gun position in a crater within reach of a colony, is built from the

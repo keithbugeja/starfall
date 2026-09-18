@@ -9,12 +9,12 @@ import { addStructure } from './structures';
 import type { World } from './world';
 
 /** Fit a base with its machinery. gridFed bases draw from a body-wide source and get no plant. */
-export function equipBase(w: World, pad: Pad, gridFed: boolean, rng: Rng): void {
+export function equipBase(w: World, pad: Pad, gridFed: boolean, rng: Rng, opts: { radiator?: boolean } = {}): void {
   const b = pad.body;
   const side = rng.sign();
   const arc = (u: number): number => pad.angle + (u / b.radius) * side;
   pad.mast = addStructure(w, b, 'mast', arc(pad.halfWidth + 4.5), pad, `${pad.name} MAST`);
-  pad.radiator = addStructure(w, b, 'radiator', arc(-(pad.halfWidth + 4.5)), pad, `${pad.name} RADIATOR`);
+  if (opts.radiator !== false) pad.radiator = addStructure(w, b, 'radiator', arc(-(pad.halfWidth + 4.5)), pad, `${pad.name} RADIATOR`);
   if (!gridFed) {
     const plant = addStructure(w, b, 'plant', arc(pad.halfWidth + 9.5), pad, `${pad.name} PLANT`);
     pad.plant = plant;

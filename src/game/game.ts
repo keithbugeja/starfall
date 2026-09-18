@@ -646,7 +646,7 @@ export class Game {
         }
       }
       // name label when zoomed out
-      if (upp > 0.45 && b.kind !== 'moon') drawTextWorld(L, b.name, b.pos.x, 0.3, -(b.pos.y - b.radius - upp * 14), upp * 10, pal[0], pal[1], pal[2], 0.55, 'center', 1.2);
+      if (upp > 0.45 && b.kind !== 'moon' && (!b.secret || w.discovered.has(b.name))) drawTextWorld(L, b.name, b.pos.x, 0.3, -(b.pos.y - b.radius - upp * 14), upp * 10, pal[0], pal[1], pal[2], 0.55, 'center', 1.2);
       const rotOff = b.rotates ? b.spinAngle : 0;
       for (const pad of b.pads) {
         const col = padColor(pad.kind, pad.alive);

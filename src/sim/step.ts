@@ -60,6 +60,9 @@ export function stepWorld(w: World, c: Controls, dt: number, opts: StepOptions):
   landedServices(w, dt);
   pruneShips(w);
   updatePings(w, dt);
+  // secret places are named once the pilot has been near them or a ping has come back from them
+  if ((w.tick & 15) === 0) for (const b of w.bodies) if (b.secret && !w.discovered.has(b.name) && Math.hypot(b.pos.x - w.player.pos.x, b.pos.y - w.player.pos.y) < b.maxRadius * 3 + 80) w.discovered.add(b.name);
+  for (const ev of w.pingEvents) if (ev.body.secret) w.discovered.add(ev.body.name);
   updateSlices(w, dt);
   updatePlayerSensing(w);
   updateJournal(w, dt);

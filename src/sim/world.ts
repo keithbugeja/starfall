@@ -356,7 +356,14 @@ export interface SliceState {
   faultAnswerKind: string;
   tideStillUntil: number;
   tideCalledUntil: number;
+  lighthouseOnBeat: number;
+  lighthouseLastPing: number;
+  lighthouseCooldownUntil: number;
+  logs: FoundLog[];
 }
+
+/** A recorder found in the world: it plays when picked up, one line at a time. */
+export interface FoundLog { pickup: Pickup; from: string; lines: string[]; line: number; next: number; noteKey: string; noteText: string; }
 
 export function emptySliceState(): SliceState {
   return {
@@ -365,6 +372,7 @@ export function emptySliceState(): SliceState {
     rock: null, blackBox: null, wreck: null, logPlayed: false, logLine: 0, logNext: 0, beaconNext: 0,
     fault: null, faultOnBeat: 0, faultOffBeat: 0, faultLastPing: -1e9, faultCooldownUntil: -1e9, faultFlash: 0, faultAnswerAt: -1e9, faultAnswerKind: '',
     tideStillUntil: -1e9, tideCalledUntil: -1e9,
+    lighthouseOnBeat: 0, lighthouseLastPing: -1e9, lighthouseCooldownUntil: -1e9, logs: [],
   };
 }
 

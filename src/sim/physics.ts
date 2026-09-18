@@ -131,7 +131,8 @@ export function stepShip(w: World, s: Ship, c: Controls, dt: number): void {
   const star = w.star;
   const dStar = Math.hypot(s.pos.x - star.pos.x, s.pos.y - star.pos.y);
   if (dStar < star.heatRadius) {
-    const f = 1 - (dStar - star.radius) / (star.heatRadius - star.radius);
+    // radiant heat: a shadow (a world's night side, a vane) blocks it
+    const f = inShadow(w, s.pos) ? 0 : 1 - (dStar - star.radius) / (star.heatRadius - star.radius);
     const dmg = Math.max(0, f) * 28 / st.heatResist * dt;
     if (dmg > 0) damageShip(w, s, dmg, 'none', 'heat');
     if (dStar < star.radius * 1.02) damageShip(w, s, 1000, 'none', 'star');
@@ -191,9 +192,9 @@ function outOfBounds(w: World, s: Ship): void {
   const d = Math.hypot(s.pos.x, s.pos.y);
   const lim = w.systemRadius * 1.15;
   if (d > lim) {
-    // nudge back toward the system: the edge of known space
-    const k = (d - lim) / d;
-    s.vel.x -= s.pos.x * k * 0.6; s.vel.y -= s.pos.y * k * 0.6;
+    // nudge back toward the system: the edge of known space (a gentle, steady push)
+    const k = Math.min(1, (d - lim) / 400);
+    s.vel.x -= s.pos.x / d * 12 * k * (1 / 120); s.vel.y -= s.pos.y / d * 12 * k * (1 / 120);
   }
 }
 

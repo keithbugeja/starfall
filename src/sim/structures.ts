@@ -123,8 +123,10 @@ export function stepStructures(w: World, dt: number): void {
         const impact = -vn;
         if (impact > 3) {
           damageShip(w, sh, Math.pow(impact - 3, 1.3) * 1.5, 'none', 'collision');
+          // incidental bumps leave machinery alone; a real ram (a wasp at forty, a freighter at fifteen) does not
           const m = sh.radius * sh.radius * sh.massMul;
-          damageStructure(w, s, 0.5 * m * impact * impact, `a collision with a ${sh.name.toLowerCase()}`);
+          const e = 0.5 * m * impact * impact;
+          if (e > 900) damageStructure(w, s, e, `a collision with a ${sh.name.toLowerCase()}`);
           sfx(w, 'impact', sh.pos, Math.min(1, impact / 12), impact);
         }
       }

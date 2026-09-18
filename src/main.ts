@@ -138,6 +138,13 @@ const harness = {
   contact(): unknown { const c = game.world.contact; return c ? { ...c, age: game.world.time - c.time } : null; },
   tracked(): number { return game.tracked; },
   signature(): number { return signature(game.world, game.world.player); },
+  /** The authored places: where they are and whether the pilot has found them. */
+  places(): unknown {
+    const w = game.world;
+    const body = (name: string) => { const b = w.bodies.find(x => x.name === name); return b ? { name, x: b.pos.x, y: b.pos.y, vx: b.vel.x, vy: b.vel.y, r: b.radius, secret: b.secret, found: w.discovered.has(name), spin: b.spinAngle, free: b.free, integrity: b.integrity, pads: b.pads.map(q => q.name) } : null; };
+    const pad = (name: string) => { const q = w.pads.find(x => x.name === name); if (!q) return null; const pp = padWorldPos(q, 0); return { name, body: q.body.name, x: pp.x, y: pp.y, alive: q.alive, guns: q.guns }; };
+    return { slipway: body('THE SLIPWAY'), lighthouse: body('THE LIGHTHOUSE'), hollow: body('HOLLOW'), fault: body('THE FAULT'), pilgrim: body('PILGRIM'), kiln: pad('THE KILN'), relay: pad('THE RELAY'), mike: pad('BASE MIKE'), core: pad('THE STARFALL'), logs: w.slices.logs.map(l => ({ from: l.from, alive: l.pickup.alive, line: l.line, x: l.pickup.pos.x, y: l.pickup.pos.y })), discovered: [...w.discovered] };
+  },
   cores(): unknown { return game.world.pickups.filter(k => k.alive && k.role === 'core').map(k => ({ name: k.name, origin: k.origin, x: k.pos.x, y: k.pos.y, tethered: !!k.tetheredBy })); },
   journal(): unknown { return game.world.journal.map(e => ({ t: Math.round(e.time), key: e.key, text: e.text })); },
   log(since = 0): unknown { return game.world.log.filter(e => e.time >= since).map(e => ({ t: Math.round(e.time), kind: e.kind, text: e.text, param: e.param ?? 0 })); },

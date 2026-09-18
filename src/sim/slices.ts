@@ -1,8 +1,8 @@
 // Hand-authored experiences: THE CUT, PILGRIM, THE SIGNAL IN THE BELT and THE FAULT'S ANSWER.
 // Nothing here is marked on the HUD; the world shows things and the player interprets them.
 import { angleDiff, clamp, TAU, type V2 } from '../engine/math';
-import { addPad, createBody, padWorldPos, surfaceVelocity, terrainRadiusAt, type Body, type Pad } from './bodies';
-import { gravityAt, predictTrajectory, spawnPickup, type Trajectory } from './physics';
+import { addPad, createBody, padWorldAngle, padWorldPos, surfaceVelocity, terrainRadiusAt, type Body, type Pad } from './bodies';
+import { damageBase, gravityAt, inShadow, padDamaged, predictTrajectory, spawnPickup, type Trajectory } from './physics';
 import { bodyToWorld, fissureFromPath, notchTerrain } from './walls';
 import { comm, sfx, type Pickup, type World } from './world';
 import { addPowerSource, spawnCore } from './power';
@@ -91,7 +91,7 @@ function authorSignalRock(w: World): void {
   const fault = w.bodies.find(b => b.name === 'THE FAULT');
   let phase = w.rng.next() * TAU;
   if (fault && fault.orbit) { for (let i = 0; i < 8 && Math.abs(angleDiff(phase, fault.orbit.phase)) < 0.6; i++) phase = w.rng.next() * TAU; }
-  const rock = createBody({ name: 'HOLLOW', kind: 'planet', type: 'rock', radius: 22, surfaceG: 0.5, roughness: 0.18, orbit: { parent: star, radius: r, period: TAU * Math.sqrt(r * r * r / star.mass), phase }, palette: ROCK_PALETTE, seed: w.seed + 9090, landable: true, soiMul: 3, hollow: true, segments: 56 });
+  const rock = createBody({ name: 'HOLLOW', kind: 'planet', type: 'rock', radius: 22, surfaceG: 0.5, roughness: 0.18, orbit: { parent: star, radius: r, period: TAU * Math.sqrt(r * r * r / star.farMass), phase }, palette: ROCK_PALETTE, seed: w.seed + 9090, landable: true, soiMul: 3, hollow: true, segments: 56, secret: true });
   w.bodies.push(rock);
   // initial position
   rock.pos.x = star.pos.x + Math.cos(phase) * r; rock.pos.y = star.pos.y + Math.sin(phase) * r;
@@ -120,6 +120,17 @@ function authorSignalRock(w: World): void {
   const box = spawnPickup(w, 'log', bp.x, bp.y, rock.vel.x, rock.vel.y, 0, null, 'BLACK BOX');
   box.radius = 0.6; box.mass = 0.2; box.beacon = true; box.glow = 0.4;
   w.slices.rock = rock; w.slices.wreck = wreck; w.slices.blackBox = box;
+  // Kestrel Seven came apart on the way in: a trail of pieces points at the mouth from well outside
+  {
+    const mx = Math.cos(mouth), my = Math.sin(mouth);
+    for (let i = 0; i < 7; i++) {
+      const dist = 40 + i * 48 + w.rng.next() * 14;
+      const side = (w.rng.next() - 0.5) * (6 + i * 4);
+      const x = rock.pos.x + mx * dist - my * side, y = rock.pos.y + my * dist + mx * side;
+      const k = spawnPickup(w, i === 6 ? 'wreck' : 'salvage', x, y, rock.vel.x, rock.vel.y, 35, null, i === 6 ? 'DRIVE SECTION' : '');
+      k.life = 1e9; if (i === 6) { k.radius = 1.8; k.mass = 2.0; }
+    }
+  }
 }
 
 /** PILGRIM: a generation ship falling toward the star. Spawned by the runtime once the game is under way. */
@@ -140,20 +151,40 @@ export function spawnPilgrim(w: World): Body {
   hull.mass = 0; hull.soi = 0;
   // start inside the star's full well, on a path that dives deep into the heat: the tangential
   // speed is found numerically against the real gravity model so the closest approach is ~250
-  const r0 = 3400, rpWant = 250;
-  const ang = w.rng.next() * TAU;
+  const rpWant = 210;
+  let r0 = 3400;
+  for (const b of w.bodies) if (b.orbit && b.orbit.parent === star && b.kind !== 'hull') r0 = Math.max(r0, b.orbit.radius + b.soi + 150);
+  const inward = 18; // it is already falling when it appears
+  // the clearest radial line: farthest from every world's well, with the worlds where they will be as it falls
+  let ang = 0, bestClear = -1;
+  for (let i = 0; i < 72; i++) {
+    const a = (i / 72) * TAU;
+    let clear = 1e9;
+    for (const b of w.bodies) {
+      if (!b.orbit || b.orbit.parent !== star || b.kind === 'hull') continue;
+      for (let t = 0; t <= 480; t += 40) {
+        const hr = r0 - inward * t; if (hr < b.orbit.radius - b.soi) break;
+        const ba = b.orbit.phase + b.orbit.angularSpeed * (w.time + t);
+        const bx = Math.cos(ba) * b.orbit.radius, by = Math.sin(ba) * b.orbit.radius;
+        const d = Math.hypot(Math.cos(a) * hr - bx, Math.sin(a) * hr - by);
+        clear = Math.min(clear, d - b.soi);
+      }
+    }
+    if (clear > bestClear) { bestClear = clear; ang = a; }
+  }
   hull.pos.x = star.pos.x + Math.cos(ang) * r0; hull.pos.y = star.pos.y + Math.sin(ang) * r0;
   const dir = w.rng.sign();
+  void bestClear;
   let lo = 0, hi = Math.sqrt(star.mass / r0);
   const periFor = (v: number): number => {
-    predictTrajectory(w, hull.pos.x, hull.pos.y, -Math.sin(ang) * v * dir, Math.cos(ang) * v * dir, 1, 900, 1.0, traj, hull);
+    predictTrajectory(w, hull.pos.x, hull.pos.y, -Math.sin(ang) * v * dir - Math.cos(ang) * inward, Math.cos(ang) * v * dir - Math.sin(ang) * inward, 1, 900, 1.0, traj, hull);
     let m = 1e9;
     for (let i = 0; i < traj.count; i++) m = Math.min(m, Math.hypot(traj.pts[i * 2] - star.pos.x, traj.pts[i * 2 + 1] - star.pos.y));
     return m;
   };
   for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; if (periFor(mid) < rpWant) lo = mid; else hi = mid; }
   const vApo = (lo + hi) / 2;
-  hull.vel.x = -Math.sin(ang) * vApo * dir; hull.vel.y = Math.cos(ang) * vApo * dir;
+  hull.vel.x = -Math.sin(ang) * vApo * dir - Math.cos(ang) * inward; hull.vel.y = Math.cos(ang) * vApo * dir - Math.sin(ang) * inward;
   hull.spinAngle = ang + Math.PI * 0.5 * dir; // hull axis roughly along its motion
   hull.angVel = 0.004 * dir;
   // three surviving thrusters as pads with tanks
@@ -183,20 +214,9 @@ export function stepFreeBodies(w: World, dt: number): void {
   for (let bi = w.bodies.length - 1; bi >= 0; bi--) {
     const b = w.bodies[bi];
     if (!b.free) continue;
-    // gravity from everything else
-    let ax = 0, ay = 0;
-    for (const o of w.bodies) {
-      if (o === b || o.mass <= 0) continue;
-      const dx = o.pos.x - b.pos.x, dy = o.pos.y - b.pos.y;
-      const r2 = dx * dx + dy * dy;
-      if (r2 >= o.soi * o.soi) continue;
-      const r = Math.sqrt(r2);
-      const rc = Math.max(r, o.radius * 0.6);
-      let g = o.mass / (rc * rc);
-      const f = 1 - smooth(o.soi * 0.75, o.soi, r);
-      g *= f;
-      ax += dx / r * g; ay += dy / r * g;
-    }
+    // gravity from everything else (a hull has no mass of its own, so the sum excludes it)
+    gravityAt(w, b.pos.x, b.pos.y, gTmp);
+    let ax = gTmp.x, ay = gTmp.y;
     // thrusters
     for (const t of b.thrusters) {
       if (t.fuel <= 0) continue;
@@ -213,9 +233,22 @@ export function stepFreeBodies(w: World, dt: number): void {
     // heat and the star
     const star = w.star;
     const d = Math.hypot(b.pos.x - star.pos.x, b.pos.y - star.pos.y);
-    if (d < star.heatRadius) {
+    if (d < star.heatRadius && !inShadow(w, b.pos)) {
       const f = 1 - (d - star.radius) / (star.heatRadius - star.radius);
       b.integrity -= Math.max(0, f) * 1.2 * dt;
+    }
+    // a hull that meets a world breaks up on it, and what it lands on suffers
+    let struck: Body | null = null;
+    for (const o of w.bodies) {
+      if (o === b || o.kind === 'star' || o.kind === 'hull' || o.free) continue;
+      const dd = Math.hypot(b.pos.x - o.pos.x, b.pos.y - o.pos.y);
+      if (dd < o.maxRadius + b.radius * 0.45) { struck = o; break; }
+    }
+    if (struck) {
+      const ang = Math.atan2(b.pos.y - struck.pos.y, b.pos.x - struck.pos.x);
+      for (const p of struck.pads) { const arc = Math.abs(angleDiff(padWorldAngle(p), ang)) * struck.radius; if (arc < b.radius && p.alive) { if (p.kind === 'enemybase' || p.kind === 'core') damageBase(w, p, 400); else padDamaged(w, p, 80); } }
+      comm(w, 'CONTROL', `${b.name} HAS COME DOWN ON ${struck.name}.`, [1, 0.4, 0.3], 3, b.pos);
+      b.integrity = 0;
     }
     if (d < star.radius * 1.05 || b.integrity <= 0) {
       // lost
@@ -308,7 +341,12 @@ export function updateSlices(w: World, dt: number): void {
       w.audioEvents.push({ kind: 'blip', pos: null, volume: 0.45 * (1 - d / 1800), param: clamp(1 - d / 1800, 0, 1) });
       w.hudFlicker = 0.35 * (1 - d / 1800);
     }
-  } else if (S.blackBox && !S.blackBox.alive && !S.logPlayed) {
+  }
+  for (const lg of S.logs) {
+    if (lg.pickup.alive || lg.line >= lg.lines.length) continue;
+    if (w.time >= lg.next) { comm(w, lg.from, lg.lines[lg.line], [1, 0.9, 0.5], 2); lg.line++; lg.next = w.time + 5; if (lg.line >= lg.lines.length && lg.noteKey) note(w, lg.noteKey, lg.noteText); }
+  }
+  if (S.blackBox && !S.blackBox.alive && !S.logPlayed) {
     // collected: the log plays out
     const lines = [
       'KESTREL SEVEN, FINAL ENTRY. THE FAULT IS NOT A ROCK. IT KEEPS TIME WITH THE STARFALL.',
@@ -320,6 +358,31 @@ export function updateSlices(w: World, dt: number): void {
       S.logLine++;
       S.logNext = w.time + 5;
       if (S.logLine >= lines.length) { S.logPlayed = true; note(w, 'kestrel-seven', `KESTREL SEVEN'S LOG, FROM THE CAVE IN THE HOLLOW ROCK. ANOTHER PATROL PILOT, YEARS BACK. THE FAULT 'KEEPS TIME WITH THE STARFALL', THE LOG SAYS.`); }
+    }
+  }
+  // ---- the Lighthouse: fed, it carries the beat further than the Fault ever could
+  {
+    const lh = w.bodies.find(b => b.name === 'THE LIGHTHOUSE');
+    const src = lh ? w.power.find(q => q.body === lh) : null;
+    if (lh && src) for (const ev of w.pingEvents) {
+      if (ev.body !== lh) continue;
+      lh.flashUntil = w.time + 1.5;
+      if (!src.powered) { S.lighthouseOnBeat = 0; continue; }
+      if (w.time < S.lighthouseCooldownUntil) continue;
+      const ph = (ev.time % TIDE_PERIOD) / TIDE_PERIOD;
+      const onBeat = Math.min(ph, 1 - ph) < 0.13;
+      if (w.time - S.lighthouseLastPing > 10) S.lighthouseOnBeat = 0;
+      S.lighthouseLastPing = w.time;
+      S.lighthouseOnBeat = onBeat ? S.lighthouseOnBeat + 1 : 0;
+      if (S.lighthouseOnBeat >= 3) {
+        S.lighthouseOnBeat = 0; S.lighthouseCooldownUntil = w.time + 600;
+        S.tideStillUntil = w.time + 300;
+        for (const s of w.ships) if (s.faction === 'enemy' && s.alive) s.stunned = 300;
+        w.pings.push({ x: lh.pos.x, y: lh.pos.y, t0: w.time, r: 0, speed: 220, maxR: 6000, echo: true, hit: new Set(), bodiesHit: new Set() });
+        comm(w, 'SENSORS', 'EVERY HOSTILE EMISSION IN THE SYSTEM HAS FLATLINED. THE ARRAY IS STILL TRANSMITTING.', [0.85, 0.45, 1.0], 3);
+        sfx(w, 'faultanswer', null, 1, 0);
+        note(w, 'lighthouse-still', 'THE ARRAY SPOKE WHEN IT HAD A CORE AND I SCANNED IT THREE TIMES ON THE PEAK. THE WHOLE TIDE WENT QUIET, AND STAYED QUIET.');
+      }
     }
   }
   // ---- the Fault's answer

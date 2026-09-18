@@ -1,7 +1,9 @@
 // Director: the living system. Enemy pressure, waves from bases, events with timers and consequences,
 // civilian traffic, colony and mine economies. Nothing here is a quest marker; everything is a situation.
 import { TAU, type V2 } from '../engine/math';
-import { contactGuess, spawnAiShip, spawnSentinel } from './ai';
+import { contactGuess, recordContact, spawnAiShip, spawnSentinel } from './ai';
+import { canSense } from './sense';
+import { structurePos } from './structures';
 import { addPad, padWorldAngle, padWorldPos, surfaceVelocity, terrainNormalAt, type Body, type Pad } from './bodies';
 import { poweredAt } from './power';
 import { equipBase } from './installations';
@@ -36,6 +38,12 @@ function enemyBases(w: World): Pad[] { return w.pads.filter(p => p.alive && (p.k
 function dist(a: V2, b: V2): number { return Math.hypot(a.x - b.x, a.y - b.y); }
 
 function padPos(p: Pad, alt = 0): V2 { return padWorldPos(p, alt); }
+
+/** Push a spawn point out of any world it would start inside. */
+function outsideBodies(w: World, p: V2): V2 {
+  for (const b of w.bodies) { const dx = p.x - b.pos.x, dy = p.y - b.pos.y, d = Math.hypot(dx, dy); const need = (b.kind === 'star' ? b.radius * 2 : b.maxRadius) + 40; if (d < need) { p.x = b.pos.x + dx / (d || 1) * need; p.y = b.pos.y + dy / (d || 1) * need; } }
+  return p;
+}
 
 /** Direction from the enemy world toward a point (so raids arrive from a consistent side). */
 function fromEnemyDir(w: World, target: V2): V2 {
@@ -78,6 +86,14 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
       if (!poweredAt(w, b.body, pp.x, pp.y)) { w.log.push({ time: w.time, kind: 'no-launch', text: b.name, x: pp.x, y: pp.y }); continue; }
       if (enemiesAlive < 5 + Math.floor(w.threat * 0.5)) spawnWave(w, b);
     }
+  }
+  // a powered mast listens on its own: a base with no guns still tells the tide where you are
+  if (w.player.alive && !w.player.docked) for (const b of bases) {
+    const m = b.mast;
+    if (!m || !m.alive) continue;
+    const mp = structurePos(m);
+    if (!poweredAt(w, b.body, mp.x, mp.y)) continue;
+    if (canSense(w, mp.x, mp.y, 260, w.player)) recordContact(w, mp.x, mp.y, b.name + ' MAST');
   }
   // sentinels regrow slowly at bases, and powered bases rebuild broken fins and masts
   for (const b of bases) {
@@ -196,7 +212,7 @@ function openingRaid(w: World, d: DirectorState): void {
   const dir = fromEnemyDir(w, tp);
   const e = newEvent(w, 'raid', tp, `RAID ON ${target.name}`, 150, 300);
   e.target = target;
-  const spawn = { x: tp.x - dir.x * 240, y: tp.y - dir.y * 240 };
+  const spawn = outsideBodies(w, { x: tp.x - dir.x * 240, y: tp.y - dir.y * 240 });
   const rv = spawnAiShip(w, 'reaver', 'enemy', spawn.x, spawn.y, Math.atan2(dir.y, dir.x), 'raid', target.body);
   rv.ai!.home = target;
   e.ships.push(rv);
@@ -253,7 +269,7 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
       const n = w.threat < 3 ? 1 : 2;
       const e = newEvent(w, 'raid', tp, `RAID ON ${target.name}`, 150, 300 + n * 100);
       e.target = target;
-      const spawn = { x: tp.x - dir.x * 260 + (w.rng.next() - 0.5) * 60, y: tp.y - dir.y * 260 + (w.rng.next() - 0.5) * 60 };
+      const spawn = outsideBodies(w, { x: tp.x - dir.x * 260 + (w.rng.next() - 0.5) * 60, y: tp.y - dir.y * 260 + (w.rng.next() - 0.5) * 60 });
       for (let i = 0; i < n; i++) {
         const rv = spawnAiShip(w, 'reaver', 'enemy', spawn.x + i * 6, spawn.y + i * 6, Math.atan2(dir.y, dir.x), 'raid', target.body);
         rv.ai!.home = target;
@@ -278,6 +294,8 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
       // put it partway along the route
       const t = 0.3 + w.rng.next() * 0.3;
       f.pos.x = fp.x + (to.pos.x - fp.x) * t; f.pos.y = fp.y + (to.pos.y - fp.y) * t;
+      // never inside a world: push out along the radial if the route runs through one
+      for (const b of w.bodies) { const dx = f.pos.x - b.pos.x, dy = f.pos.y - b.pos.y, d = Math.hypot(dx, dy); const need = (b.kind === 'star' ? b.radius * 2 : b.maxRadius) + 30; if (d < need) { f.pos.x = b.pos.x + dx / (d || 1) * need; f.pos.y = b.pos.y + dy / (d || 1) * need; } }
       const dir = { x: to.pos.x - f.pos.x, y: to.pos.y - f.pos.y };
       const dl = Math.hypot(dir.x, dir.y) || 1;
       f.vel.x = dir.x / dl * 22; f.vel.y = dir.y / dl * 22;

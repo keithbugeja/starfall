@@ -146,7 +146,11 @@ export function ambientHeat(w: World, s: Ship): number {
   let h = 0;
   const star = w.star;
   const d = Math.hypot(s.pos.x - star.pos.x, s.pos.y - star.pos.y);
-  if (d < star.heatRadius) h += Math.max(0, 1 - (d - star.radius) / (star.heatRadius - star.radius)) * 0.14;
+  const n0 = s.landed ? landedNormal(s) : null;
+  const lit = sunlight(w, s.pos.x, s.pos.y, n0);
+  if (d < star.heatRadius) h += Math.max(0, 1 - (d - star.radius) / (star.heatRadius - star.radius)) * 0.14 * (lit > 0 ? 1 : 0);
+  // beyond the scorch radius the star still warms everything it shines on, out to the warm radius
+  else if (d < star.warmRadius) h += Math.max(0, 1 - (d - star.heatRadius) / (star.warmRadius - star.heatRadius)) * 0.5 * lit;
   if (w.flare.active && w.flare.intensity > 0) {
     const n = s.landed ? landedNormal(s) : null;
     h += 0.16 * w.flare.intensity * sunlight(w, s.pos.x, s.pos.y, n);

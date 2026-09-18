@@ -256,8 +256,9 @@ export function drawMap(g: Game): void {
     const enemyWorld = b.pads.some(pd => (pd.kind === 'core' || pd.kind === 'enemybase') && pd.alive);
     const col = b.name === 'THE FAULT' ? C.violet : enemyWorld ? C.red : b.palette.high;
     H.circle2(bx, by, r, 20, col[0], col[1], col[2], 0.9, 1.3);
-    if (b.kind !== 'moon' || g.mapZoom > 1.8) drawText(H, b.name, bx, by + r + 5 * s, (b.kind === 'moon' ? 7 : 9) * s, col[0], col[1], col[2], 0.85, 'center');
-    sels.push({ name: b.name, x: bx, y: by, nav: { name: b.name, body: b }, col });
+    const named = !b.secret || w.discovered.has(b.name);
+    if (named && (b.kind !== 'moon' || g.mapZoom > 1.8)) drawText(H, b.name, bx, by + r + 5 * s, (b.kind === 'moon' ? 7 : 9) * s, col[0], col[1], col[2], 0.85, 'center');
+    if (named) sels.push({ name: b.name, x: bx, y: by, nav: { name: b.name, body: b }, col });
     // pads as ticks around the body
     for (const pd of b.pads) {
       const pc = padColor(pd.kind, pd.alive);

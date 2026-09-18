@@ -13,6 +13,13 @@ function noteContact(w: World, by: Ship, t: Ship): void {
   w.contact = { x: t.pos.x, y: t.pos.y, vx: t.vel.x, vy: t.vel.y, time: w.time, by: by.name };
 }
 
+/** A fixed sensor (a base's mast) has the player. */
+export function recordContact(w: World, x: number, y: number, by: string): void {
+  const p = w.player;
+  void x; void y;
+  w.contact = { x: p.pos.x, y: p.pos.y, vx: p.vel.x, vy: p.vel.y, time: w.time, by };
+}
+
 /** Where the tide thinks the player is, extrapolated a bounded time from the last fix. Null when it has none fresh enough. */
 export function contactGuess(w: World, maxAge: number): V2 | null {
   const c = w.contact;
@@ -152,6 +159,23 @@ function avoidBodies(w: World, s: Ship, want: V2, lookahead = 2.2): void {
       want.x += nx * 22 * k; want.y += ny * 22 * k;
       // also add a tangential nudge so we slide around rather than stall against the pull
       want.x += -ny * 8 * k * (s.ai ? s.ai.strafeDir : 1); want.y += nx * 8 * k * (s.ai ? s.ai.strafeDir : 1);
+    }
+  }
+  // big rocks on the near-future path: sidestep them
+  for (const a of w.asteroids) {
+    if (!a.alive || a.size < 2) continue;
+    const dx = s.pos.x - a.pos.x, dy = s.pos.y - a.pos.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 70) continue;
+    const margin = a.radius + s.radius * 2 + 3;
+    const rvx = s.vel.x - a.vel.x, rvy = s.vel.y - a.vel.y;
+    const t = clamp(-(dx * rvx + dy * rvy) / (rvx * rvx + rvy * rvy + 1e-6), 0, lookahead);
+    const cx = dx + rvx * t, cy = dy + rvy * t;
+    const cd = Math.hypot(cx, cy);
+    if (cd < margin || d < margin) {
+      const k = clamp(1.4 - Math.min(cd, d) / margin, 0.3, 1.4);
+      const nx = cx / (cd || 1), ny = cy / (cd || 1);
+      want.x += nx * 14 * k; want.y += ny * 14 * k;
     }
   }
 }
@@ -491,7 +515,10 @@ function civAi(w: World, s: Ship, ai: AiState, c: Controls, dt: number): void {
     const R = st.radius;
     if (!st.alive) { ai.home = null; return; }
     if (d > R * 2.2) {
-      const want: V2 = { x: st.vel.x + dx / d * Math.min(30, d * 0.2 + 6), y: st.vel.y + dy / d * Math.min(30, d * 0.2 + 6) };
+      const blk = bodyInTheWay(w, s.pos, st.pos);
+      const via = blk ? routeAround(blk, s.pos, st.pos, ai.strafeDir) : st.pos;
+      const vx0 = via.x - s.pos.x, vy0 = via.y - s.pos.y, vd = Math.hypot(vx0, vy0) || 1;
+      const want: V2 = { x: st.vel.x + vx0 / vd * Math.min(30, d * 0.2 + 6), y: st.vel.y + vy0 / vd * Math.min(30, d * 0.2 + 6) };
       avoidBodies(w, s, want, 2);
       velocityControl(w, s, want.x, want.y, 1.2, c, d > 400);
       return;

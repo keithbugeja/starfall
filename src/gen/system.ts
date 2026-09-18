@@ -4,6 +4,8 @@ import { Rng, TAU } from '../engine/math';
 import { addPad, createBody, makeBodyRng, resetBodyIds, type Body, type Pad, type PlanetType } from '../sim/bodies';
 import { authorKiln, equipBase } from '../sim/installations';
 import { createAsteroid, spawnPickup } from '../sim/physics';
+import { addPowerSource } from '../sim/power';
+import { bodyToWorld } from '../sim/walls';
 import { createStation } from '../sim/stations';
 import { createEmptyWorld, createShip, type World } from '../sim/world';
 import { makeNamer } from './names';
@@ -39,66 +41,72 @@ export function generateSystem(seed: number, seedName: string): World {
   // ---------------- star
   const starName = names.star();
   const starR = 200 + rng.int(50);
-  const star = createBody({ name: starName, kind: 'star', type: 'star', radius: starR, surfaceG: 13 + rng.next() * 4, soiMul: 22, palette: PALETTES.star, landable: false, seed, oblate: 1 });
+  const star = createBody({ name: starName, kind: 'star', type: 'star', radius: starR, surfaceG: 13 + rng.next() * 4, soiMul: 3.0, palette: PALETTES.star, landable: false, seed, oblate: 1 });
   w.star = star;
   w.bodies.push(star);
 
-  // ---------------- planets
-  const planetCount = 5 + (rng.chance(0.35) ? 1 : 0);
+  // ---------------- planets: five worlds in fixed roles. Their rails obey the star's weak far field, so
+  // free things (rocks, pods, hulls) keep station with them; the star's deep near well ends at 3.5 radii.
   const plans: PlanetPlan[] = [];
-  let orbit = 780 + rng.int(120);
-  const roles: PlanetPlan['role'][] = planetCount === 6 ? ['inner', 'home', 'mid', 'gas', 'outer', 'enemy'] : ['inner', 'home', 'mid', 'gas', 'enemy'];
-  // sometimes the gas giant is the outermost and the enemy sits on a mid world
-  if (rng.chance(0.3)) { const gi = roles.indexOf('gas'); const ei = roles.indexOf('enemy'); roles[gi] = 'enemy'; roles[ei] = 'gas'; }
+  const roles: PlanetPlan['role'][] = ['inner', 'home', 'mid', 'gas', 'enemy'];
+  const orbits = [1050, 1900, 2800, 4200, 5700].map(r => Math.round(r * (0.98 + rng.next() * 0.04)));
+  const homeOrbit = orbits[1];
+  star.farMass = 4 * Math.PI * Math.PI * homeOrbit * homeOrbit * homeOrbit / (2500 * 2500); // the home world's year is 2500 s
+  const kepler = (r: number): number => TAU * Math.sqrt(r * r * r / star.farMass);
   let phase = rng.next() * TAU;
-  for (let i = 0; i < planetCount; i++) {
+  for (let i = 0; i < roles.length; i++) {
     const role = roles[i];
+    const orbit = orbits[i];
     let type: PlanetType, radius: number, g: number, rough: number, pal: { low: number[]; mid: number[]; high: number[] };
     switch (role) {
-      case 'inner': type = rng.chance(0.6) ? 'volcanic' : 'desert'; radius = 62 + rng.int(28); g = type === 'volcanic' ? 6.5 + rng.next() * 1.5 : 4.8 + rng.next(); rough = type === 'volcanic' ? 0.16 : 0.09; pal = PALETTES[type]; break;
-      case 'home': type = 'rock'; radius = 82 + rng.int(24); g = 5.6 + rng.next() * 1.2; rough = 0.11; pal = rng.chance(0.5) ? PALETTES.rock : PALETTES.rock2; break;
-      case 'mid': type = rng.chance(0.5) ? 'desert' : 'crystal'; radius = 60 + rng.int(35); g = type === 'desert' ? 4.6 + rng.next() : 3.6 + rng.next(); rough = type === 'desert' ? 0.08 : 0.14; pal = PALETTES[type]; break;
-      case 'gas': type = 'gas'; radius = 150 + rng.int(40); g = 9 + rng.next() * 2; rough = 0; pal = rng.pick([PALETTES.gas, PALETTES.gas2, PALETTES.gas3]); break;
-      case 'outer': type = 'ice'; radius = 55 + rng.int(30); g = 3.2 + rng.next(); rough = 0.07; pal = PALETTES.ice; break;
-      default: type = rng.chance(0.5) ? 'ice' : 'rock'; radius = 70 + rng.int(30); g = 4.5 + rng.next() * 1.5; rough = 0.13; pal = type === 'ice' ? PALETTES.ice : PALETTES.rock2; break;
+      case 'inner': type = 'volcanic'; radius = 66 + rng.int(14); g = 6.5 + rng.next() * 1.5; rough = 0.16; pal = PALETTES.volcanic; break;
+      case 'home': type = 'rock'; radius = 86 + rng.int(16); g = 5.6 + rng.next() * 1.2; rough = 0.11; pal = rng.chance(0.5) ? PALETTES.rock : PALETTES.rock2; break;
+      case 'mid': type = rng.chance(0.5) ? 'desert' : 'crystal'; radius = 68 + rng.int(20); g = type === 'desert' ? 4.6 + rng.next() : 3.6 + rng.next(); rough = type === 'desert' ? 0.08 : 0.14; pal = PALETTES[type]; break;
+      case 'gas': type = 'gas'; radius = 160 + rng.int(30); g = 9 + rng.next() * 2; rough = 0; pal = rng.pick([PALETTES.gas, PALETTES.gas2, PALETTES.gas3]); break;
+      default: type = 'ice'; radius = 78 + rng.int(18); g = 4.8 + rng.next() * 1.2; rough = 0.13; pal = PALETTES.ice; break;
     }
-    const period = 1500 + orbit * 1.4 + rng.int(800);
-    const body = createBody({ name: role === 'enemy' ? names.world() : names.world(), kind: type === 'gas' ? 'gas' : 'planet', type, radius, surfaceG: g, roughness: rough, orbit: { parent: star, radius: orbit, period, phase }, palette: pal, seed: seed + 101 * (i + 1), landable: type !== 'gas', soiMul: type === 'gas' ? 5.5 : 7 });
+    const body = createBody({ name: names.world(), kind: type === 'gas' ? 'gas' : 'planet', type, radius, surfaceG: g, roughness: rough, orbit: { parent: star, radius: orbit, period: kepler(orbit), phase }, palette: pal, seed: seed + 101 * (i + 1), landable: type !== 'gas', soiMul: type === 'gas' ? 5.5 : 5 });
     if (type !== 'gas') { const br = makeBodyRng(seed, 31 + i); body.rotates = true; body.spin = br.sign() * (0.005 + br.next() * 0.005); }
     w.bodies.push(body);
     const plan: PlanetPlan = { body, role, moons: [] };
     plans.push(plan);
-    // moons
-    const moonCount = type === 'gas' ? 2 + rng.int(2) : role === 'inner' ? 0 : rng.int(2) + (role === 'home' ? 1 : 0);
-    let mOrbit = radius * 2.8 + 40;
+    // moons: the home world one, the mid world one (a quiet place for a listening post), the gas giant two, the enemy world one
+    const moonCount = role === 'inner' ? 0 : role === 'gas' ? 2 : 1;
+    let mOrbit = role === 'home' ? radius * 4.6 + 40 : radius * 2.8 + 40;
     for (let m = 0; m < moonCount; m++) {
-      const mr = 22 + rng.int(18);
+      const mr = 24 + rng.int(14);
       const moon = createBody({ name: names.moon(), kind: 'moon', type: rng.chance(0.5) ? 'ice' : 'rock', radius: mr, surfaceG: 2.2 + rng.next() * 1.4, roughness: 0.12 + rng.next() * 0.06, orbit: { parent: body, radius: mOrbit, period: 260 + mOrbit * 1.2 + rng.int(200), phase: rng.next() * TAU }, palette: rng.chance(0.5) ? PALETTES.ice : PALETTES.rock2, seed: seed + 977 * (i + 1) + m * 31, soiMul: 4.5 });
       { const mr2 = makeBodyRng(seed, 61 + i * 7 + m); moon.rotates = true; moon.spin = mr2.sign() * (0.005 + mr2.next() * 0.006); }
       w.bodies.push(moon);
       plan.moons.push(moon);
       mOrbit += mr * 3 + 70 + rng.int(40);
     }
-    orbit = Math.round(orbit * (1.42 + rng.next() * 0.16)) + (type === 'gas' ? 150 : 0);
-    phase += TAU / planetCount * (0.7 + rng.next() * 0.6);
+    phase += TAU / roles.length * (0.7 + rng.next() * 0.6);
   }
-  w.systemRadius = orbit * 0.85 + 300;
-
-  // gravity anomaly: "the Fault" - tiny, brutally heavy, guards a prize
-  const faultOrbit = Math.round((plans[2].body.orbit!.radius + plans[3].body.orbit!.radius) / 2);
-  // the Fault rides a true orbit (its period follows the star's mass), so the free rocks around it stay with it
-  const fault = createBody({ name: 'THE FAULT', kind: 'planet', type: 'crystal', radius: 14, surfaceG: 60, roughness: 0.2, orbit: { parent: star, radius: faultOrbit, period: TAU * Math.sqrt(faultOrbit * faultOrbit * faultOrbit / star.mass), phase: rng.next() * TAU }, palette: PALETTES.fault, seed: seed + 4242, landable: false, soiMul: 16 });
+  // gravity anomaly: "the Fault" - tiny, brutally heavy, guards a prize; at the edge of the system, past the enemy world
+  const faultOrbit = Math.round(orbits[4] + plans[4].body.soi + 320);
+  w.systemRadius = faultOrbit + 400;
+  const fault = createBody({ name: 'THE FAULT', kind: 'planet', type: 'crystal', radius: 14, surfaceG: 60, roughness: 0.2, orbit: { parent: star, radius: faultOrbit, period: kepler(faultOrbit), phase: rng.next() * TAU }, palette: PALETTES.fault, seed: seed + 4242, landable: false, soiMul: 16 });
   w.bodies.push(fault);
   plans.push({ body: fault, role: 'fault', moons: [] });
+
+  // the Lighthouse: a dead sun station on a slow rail inside the star's near well, its vane toward the star
+  {
+    const r = Math.round(starR * 2.6);
+    const vane = (t: number): number => { const c = Math.abs(Math.cos(t)), s2 = Math.abs(Math.sin(t)); const n = 3.2; return Math.pow(Math.pow(c / 7, n) + Math.pow(s2 / 26, n), -1 / n); };
+    const lh = createBody({ name: 'THE LIGHTHOUSE', kind: 'hull', type: 'rock', radius: 26, surfaceG: 0, roughness: 0, orbit: { parent: star, radius: r, period: 1200, phase: rng.next() * TAU }, palette: { low: [0.2, 0.2, 0.24], mid: [0.4, 0.42, 0.48], high: [0.68, 0.7, 0.78] }, seed: seed + 6161, landable: true, soiMul: 1, oblate: 0.14, rotates: true, faceParent: true, tetherable: true, profile: vane, segments: 96, secret: true });
+    lh.mass = 0; lh.soi = 0;
+    w.bodies.push(lh);
+  }
 
   // initial orbital positions (parents first: bodies array is in creation order, parents precede children)
   for (const b of w.bodies) if (b.orbit) {
     const a = b.orbit.phase;
     b.pos.x = b.orbit.parent.pos.x + Math.cos(a) * b.orbit.radius;
     b.pos.y = b.orbit.parent.pos.y + Math.sin(a) * b.orbit.radius;
-    // orbital velocity for landed/relative motion
     const wv = b.orbit.angularSpeed * b.orbit.radius;
     b.vel.x = b.orbit.parent.vel.x - Math.sin(a) * wv; b.vel.y = b.orbit.parent.vel.y + Math.cos(a) * wv;
+    if (b.faceParent) b.spinAngle = a + Math.PI;
   }
 
   // ---------------- pads
@@ -107,7 +115,6 @@ export function generateSystem(seed: number, seedName: string): World {
   const mid = plans.find(p => p.role === 'mid')!;
   const gas = plans.find(p => p.role === 'gas')!;
   const enemy = plans.find(p => p.role === 'enemy')!;
-  const outer = plans.find(p => p.role === 'outer');
   const spreadAngles = (n: number, r: Rng): number[] => {
     const base = r.next() * TAU;
     const out: number[] = [];
@@ -124,17 +131,16 @@ export function generateSystem(seed: number, seedName: string): World {
     p.stock = 2 + rng.int(4); p.fuel = true;
     return p;
   };
-  // home world: two colonies and a mine
+  // home world: two colonies and a mine; a mine on its moon
   {
     const a = spreadAngles(3, rng);
     colony(home.body, a[0]); colony(home.body, a[1]); mine(home.body, a[2]);
     for (const m of home.moons) mine(m, rng.next() * TAU);
   }
-  // mid world: colony + mine (+ derelict on a moon)
+  // mid world: colony + mine; THE KILN goes in beside the colony later
   {
     const a = spreadAngles(2, rng);
     colony(mid.body, a[0]); mine(mid.body, a[1]);
-    if (mid.moons.length) { const d = addPad(mid.moons[0], 'derelict', names.derelict(), rng.next() * TAU, 4); d.stock = 1; }
   }
   // inner world: a hardy colony and a mine in the heat
   {
@@ -143,15 +149,9 @@ export function generateSystem(seed: number, seedName: string): World {
     mine(inner.body, a[1]).stock = 5;
   }
   // gas giant moons: mine + derelict
-  if (gas.moons.length) {
-    mine(gas.moons[0], rng.next() * TAU).stock = 4;
-    if (gas.moons.length > 1) { const d = addPad(gas.moons[1], 'derelict', names.derelict(), rng.next() * TAU, 4); d.stock = 1; }
-  }
-  if (outer) {
-    colony(outer.body, rng.next() * TAU).population = 5;
-    for (const m of outer.moons) { const d = addPad(m, 'derelict', names.derelict(), rng.next() * TAU, 4); d.stock = 1; }
-  }
-  // enemy world: the Starfall site (core) and two bases
+  mine(gas.moons[0], rng.next() * TAU).stock = 4;
+  { const d = addPad(gas.moons[1], 'derelict', names.derelict(), rng.next() * TAU, 4); d.stock = 1; }
+  // enemy world: the Starfall site (core) and two bases; BASE MIKE on its moon
   {
     const a = spreadAngles(3, rng);
     const core = addPad(enemy.body, 'core', 'THE STARFALL', a[0], 6);
@@ -160,13 +160,16 @@ export function generateSystem(seed: number, seedName: string): World {
     for (let i = 1; i < 3; i++) { const b = addPad(enemy.body, 'enemybase', `BASE ${i === 1 ? 'KILO' : 'LIMA'}`, a[i], 5); b.enemyHealth = 240; b.spawnTimer = 20 + i * 15; }
     for (const m of enemy.moons) { const b = addPad(m, 'enemybase', 'BASE MIKE', rng.next() * TAU, 5); b.enemyHealth = 200; b.spawnTimer = 40; }
   }
+  // THE RELAY: a listening post on the mid world's moon. No guns, no fins: a mast, a plant, a core, and launches.
+  const relayPad = addPad(mid.moons[0], 'enemybase', 'THE RELAY', rng.next() * TAU, 4);
+  relayPad.enemyHealth = 160; relayPad.spawnTimer = 50; relayPad.guns = 0;
   // THE KILN: an enemy gun position in a crater within reach of the mid world's colony
   const instRng = makeBodyRng(seed, 777);
   const midColony = mid.body.pads.find(p => p.kind === 'colony');
   const kiln = midColony ? authorKiln(w, mid.body, midColony, instRng) : null;
   for (const b of w.bodies) for (const p of b.pads) if (p !== kiln) w.pads.push(p);
   // every base gets the same machinery: a mast, radiator fins, and a plant unless the world's grid feeds it
-  for (const p of w.pads) if ((p.kind === 'enemybase' || p.kind === 'core') && p !== kiln) equipBase(w, p, p.body === enemy.body, instRng);
+  for (const p of w.pads) if ((p.kind === 'enemybase' || p.kind === 'core') && p !== kiln) equipBase(w, p, p.body === enemy.body, instRng, { radiator: p !== relayPad });
 
   // ---------------- stations
   /** Pick a station orbit radius around a parent that stays clear of its moons' orbits. */
@@ -174,23 +177,15 @@ export function generateSystem(seed: number, seedName: string): World {
     const moons = w.bodies.filter(b => b.kind === 'moon' && b.orbit && b.orbit.parent === parent);
     // never closer to the surface than ~1.3 radii: launches must not drop straight into the well
     const minR = Math.max(parent.maxRadius + 140, parent.radius * 2.3);
-    let r = Math.max(wanted, minR);
-    for (let i = 0; i < 6; i++) {
-      let moved = false;
-      for (const m of moons) {
-        const mr = m.orbit!.radius;
-        const gap = m.maxRadius + 95;
-        if (Math.abs(r - mr) < gap) {
-          // prefer the inside of the moon's orbit (closer to port), else outside
-          r = (mr - gap >= minR) ? mr - gap : mr + gap;
-          moved = true;
-        }
-      }
-      if (!moved) break;
-    }
-    return r;
+    const clear = (r: number): boolean => moons.every(m => Math.abs(r - m.orbit!.radius) >= m.maxRadius + 95);
+    const want = Math.max(wanted, minR);
+    if (clear(want)) return want;
+    // the nearest clear radius to the wanted one, at or beyond the minimum, among the edges of every moon band
+    const cands = moons.flatMap(m => { const mr = m.orbit!.radius, gap = m.maxRadius + 95; return [mr - gap, mr + gap]; }).filter(r => r >= minR && clear(r));
+    cands.sort((a, b) => Math.abs(a - want) - Math.abs(b - want));
+    return cands.length ? cands[0] : Math.max(...moons.map(m => m.orbit!.radius + m.maxRadius + 95), minR);
   };
-  const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: clearOrbit(home.body, home.body.radius * 2.9), period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
+  const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: clearOrbit(home.body, home.body.radius * 3.4), period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
   harbour.upgrades = ['retro', 'strafe', 'struts', 'tank', 'armour', 'scatter', 'mass', 'seeker', 'sensors', 'cargo'];
   // start the harbour on the far side from every moon of its world so the first launch has room
   {
@@ -213,17 +208,61 @@ export function generateSystem(seed: number, seedName: string): World {
   const refinery = createStation(w, { name: names.station('refinery', refineryHost.name), kind: 'refinery', parent: refineryHost, orbitRadius: clearOrbit(refineryHost, refineryHost.radius * (refineryHost.kind === 'gas' ? 2.4 : 3.2)), period: 1000 + rng.int(300), phase: rng.next() * TAU, radius: 12, spin: 0.27 });
   refinery.upgrades = ['engine', 'tank', 'cargo', 'armour', 'retro', 'mass', 'heatshield', 'tractor', 'struts'];
   refinery.orePrice = 42; refinery.salvagePrice = 40;
-  const researchHost = outer ? outer.body : enemy.body === plans[plans.length - 2].body ? mid.body : enemy.body;
-  const research = createStation(w, { name: names.station('research', researchHost === enemy.body ? 'FAR' : researchHost.name), kind: 'research', parent: researchHost === enemy.body ? mid.body : researchHost, orbitRadius: clearOrbit(researchHost === enemy.body ? mid.body : researchHost, (researchHost === enemy.body ? mid.body : researchHost).radius * 4.0), period: 1100 + rng.int(300), phase: rng.next() * TAU, radius: 11, spin: -0.22 });
+  const research = createStation(w, { name: names.station('research', mid.body.name), kind: 'research', parent: mid.body, orbitRadius: clearOrbit(mid.body, mid.body.radius * 4.0), period: 1100 + rng.int(300), phase: rng.next() * TAU, radius: 11, spin: -0.22 });
   research.upgrades = ['gravdamp', 'sensors', 'rail', 'tractor', 'heatshield', 'strafe', 'seeker'];
   research.salvagePrice = 60;
   w.respawnStation = harbour;
+
+  // ---------------- THE SLIPWAY: a dead cruiser in a low orbit of the home world, fuel still in its bunker
+  {
+    const b = home.body;
+    const a = 36, bHalf = 9;
+    const profile = (t: number): number => { const c = Math.abs(Math.cos(t)), s2 = Math.abs(Math.sin(t)); const n = 4; const rr = Math.pow(Math.pow(c / a, n) + Math.pow(s2 / bHalf, n), -1 / n); const ang = Math.atan2(Math.sin(t), Math.cos(t)); return rr + (Math.abs(ang) < 0.14 ? 2.5 : 0) + (Math.abs(Math.abs(ang) - Math.PI) < 0.2 ? 2 : 0); };
+    const hull = createBody({ name: 'THE SLIPWAY', kind: 'hull', type: 'rock', radius: a + 2.5, surfaceG: 0, roughness: 0, palette: { low: [0.24, 0.22, 0.2], mid: [0.44, 0.4, 0.36], high: [0.66, 0.62, 0.56] }, seed: seed + 7272, landable: true, soiMul: 1, oblate: 0.14, free: true, rotates: true, bodyMass: 120, inertia: 120 * (a * a + bHalf * bHalf) * 2.5, tetherable: true, profile, segments: 96, secret: true });
+    hull.mass = 0; hull.soi = 0;
+    const r = b.maxRadius + 36;
+    const ph = harbour.orbit!.phase + 0.9;
+    hull.pos.x = b.pos.x + Math.cos(ph) * r; hull.pos.y = b.pos.y + Math.sin(ph) * r;
+    const v = Math.sqrt(b.mass / r);
+    hull.vel.x = b.vel.x - Math.sin(ph) * v; hull.vel.y = b.vel.y + Math.cos(ph) * v;
+    hull.spinAngle = ph + Math.PI / 2; hull.angVel = 0.003;
+    const bunker = addPad(hull, 'outpost', 'SLIPWAY BUNKER', Math.PI / 2, 3.5); bunker.fuel = true; bunker.repair = false;
+    const drive = addPad(hull, 'thruster', 'SLIPWAY DRIVE TANK', Math.PI, 3.5); drive.fuel = false;
+    hull.thrusters.push({ name: 'SLIPWAY DRIVE TANK', pad: drive, dirLocal: { x: 1, y: 0 }, force: 40, fuel: 0, capacity: 60, burn: 1 });
+    w.pads.push(bunker, drive);
+    w.bodies.push(hull);
+    (hull as unknown as { meshDirty: boolean }).meshDirty = true;
+    const lp = bodyToWorld(hull, { x: 8, y: bHalf + 1.2 });
+    const log = spawnPickup(w, 'log', lp.x, lp.y, hull.vel.x, hull.vel.y, 0, null, 'SLIPWAY RECORDER');
+    log.radius = 0.6; log.mass = 0.2; log.glow = 0.4;
+    w.slices.logs.push({ pickup: log, from: 'SLIPWAY', lines: [
+      'CRUISER SLIPWAY, LAST WATCH. WE CAME IN FROM THE DARK WITH FOUR THOUSAND BEHIND US ON THE ARK.',
+      'THE DRIVE LISTENED TO THAT THING ON THE OUTER WORLD AND STOPPED. THE ARK KEPT FALLING. WE COULD NOT FOLLOW.',
+      'BUNKER IS FULL. TAKE WHAT YOU NEED. IF THE ARK EVER COMES ROUND AGAIN, SOMEBODY FEED HER TANKS.',
+    ], line: 0, next: 0, noteKey: 'slipway-log', noteText: 'THE SLIPWAY\'S LAST WATCH SAID THEIR DRIVE STOPPED WHEN IT "LISTENED" TO SOMETHING ON THE OUTER WORLD. THE ARK THEY ESCORTED KEPT FALLING.' });
+  }
+  // ---------------- THE LIGHTHOUSE: a deck on its dark side, a socket with nothing in it, a recorder
+  {
+    const lh = w.bodies.find(x => x.name === 'THE LIGHTHOUSE')!;
+    const deck = addPad(lh, 'outpost', 'LIGHTHOUSE DECK', Math.PI, 3.5); deck.fuel = false; deck.repair = false;
+    w.pads.push(deck);
+    addPowerSource(w, lh, { x: -9.5, y: 4.5 }, 40, 'THE LIGHTHOUSE', null);
+    (lh as unknown as { meshDirty: boolean }).meshDirty = true;
+    const lp = bodyToWorld(lh, { x: -9, y: -5 });
+    const log = spawnPickup(w, 'log', lp.x, lp.y, lh.vel.x, lh.vel.y, 0, null, 'ARRAY RECORDER');
+    log.radius = 0.6; log.mass = 0.2; log.glow = 0.4;
+    w.slices.logs.push({ pickup: log, from: 'THE ARRAY', lines: [
+      'SUN STATION ARRAY, MAINTENANCE LOG. THE VANE HOLDS. NOTHING BEHIND IT COOKS, NOT EVEN IN A FLARE.',
+      'THE TRANSMITTER WANTS A REGULATOR IN THE SOCKET BEFORE IT WILL SPEAK. WE NEVER HAD ONE THAT FITTED.',
+      'THE OLD HANDS SAID IT ONLY LISTENS ON THE PEAK. THREE TIMES. I NEVER FOUND OUT WHAT IT SAYS.',
+    ], line: 0, next: 0, noteKey: 'array-log', noteText: 'THE ARRAY\'S LOG: THE VANE SHADES WHAT IS BEHIND IT EVEN IN A FLARE; THE TRANSMITTER WANTS A "REGULATOR" IN ITS SOCKET; IT "LISTENS ON THE PEAK, THREE TIMES".' });
+  }
 
   // ---------------- asteroids
   // main belt between the mid world and the next world out (never straddling an orbit: a world that
   // sweeps through a belt rains rocks on everything it carries)
   {
-    const r0 = mid.body.orbit!.radius, r1 = plans[3].body.orbit!.radius;
+    const r0 = mid.body.orbit!.radius, r1 = gas.body.orbit!.radius;
     const beltR = (r0 + r1) / 2;
     const width = Math.min(110, (r1 - r0) * 0.12);
     const n = 170 + rng.int(60);
@@ -231,7 +270,7 @@ export function generateSystem(seed: number, seedName: string): World {
       const a = rng.next() * TAU;
       const r = beltR + (rng.next() - 0.5) * 2 * width * (0.6 + rng.next() * 0.4);
       const x = Math.cos(a) * r, y = Math.sin(a) * r;
-      const v = Math.sqrt(star.mass / r) * (0.97 + rng.next() * 0.06);
+      const v = Math.sqrt(star.farMass / r) * (0.97 + rng.next() * 0.06);
       const size = rng.next() < 0.35 ? 3 : rng.next() < 0.6 ? 2 : 1;
       const ast = createAsteroid(w, x, y, -Math.sin(a) * v, Math.cos(a) * v, size, 1);
       ast.rich = rng.chance(0.12);
@@ -242,10 +281,11 @@ export function generateSystem(seed: number, seedName: string): World {
     const b = home.body;
     let outer = harbour.orbit!.radius;
     for (const m of home.moons) outer = Math.max(outer, m.orbit!.radius + m.maxRadius);
-    const cr = outer + 320;
+    // inside the world's unfaded well (the SOI fades over its outer quarter), beyond the harbour and the moon
+    const cr = b.soi * 0.5; // between the Slipway and the harbour, inside the world's unfaded well
     for (let i = 0; i < 34; i++) {
       const a = rng.next() * TAU;
-      const r = cr + (rng.next() - 0.5) * 90;
+      const r = cr + (rng.next() - 0.5) * 60;
       const x = b.pos.x + Math.cos(a) * r, y = b.pos.y + Math.sin(a) * r;
       const v = Math.sqrt(b.mass / r);
       const ast = createAsteroid(w, x, y, b.vel.x - Math.sin(a) * v, b.vel.y + Math.cos(a) * v, rng.next() < 0.5 ? 3 : 2, 2);
@@ -255,7 +295,7 @@ export function generateSystem(seed: number, seedName: string): World {
   // debris ring around the Fault: rich ore, lethal gravity
   for (let i = 0; i < 26; i++) {
     const a = rng.next() * TAU;
-    const r = 70 + rng.next() * 90;
+    const r = 42 + rng.next() * 58;
     const v = Math.sqrt(fault.mass / r);
     const ast = createAsteroid(w, fault.pos.x + Math.cos(a) * r, fault.pos.y + Math.sin(a) * r, fault.vel.x - Math.sin(a) * v, fault.vel.y + Math.cos(a) * v, rng.next() < 0.5 ? 2 : 1, 3);
     ast.rich = rng.chance(0.6);

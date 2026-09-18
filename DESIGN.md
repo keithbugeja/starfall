@@ -15,6 +15,34 @@ right velocity and orientation", combat is "shots inherit your motion and bend i
 navigation is "ride or fight the wells". The run ends when the three hulls are gone or the
 enemy core is dark; both endings show a debrief, and a win lets you keep flying.
 
+## The system as places (content pass)
+The system is authored, not rolled: five worlds in fixed roles, in a fixed order, with fixed places on them.
+Seeds change names, terrain noise, phases and small details, never what is where.
+- **Inner world** (volcanic, ~1050 out). A colony and a mine inside the star's warm zone: guns in daylight
+  there run hot and jam in seconds; the night side cools. Noon comes round every ten to twenty minutes.
+- **The Lighthouse** (2.6 star radii, a slow rail inside the deep well, unnamed until found). A dead sun
+  station whose vane faces the star and casts a real shadow: nothing behind it is scorched, not even in a
+  flare. A deck on the dark side, a recorder, an empty socket. Fed a core and scanned three times on the
+  peak, its array stills the whole tide for five minutes.
+- **Home world** (~1900). Two colonies, a mine, the harbour at 3.4 radii, a rock cluster at half the well
+  between the Slipway and the harbour, a moon with a mine riding high at 4.6 radii. **The Slipway**
+  (unnamed until found): a dead cruiser in a 130-unit orbit, visible from the harbour, with a full fuel
+  bunker you can land on, a stern tank that fires if you fill it, a recorder, and 120 units of mass on the
+  cable. Pushed into the world it breaks up on whatever lies beneath.
+- **Mid world** (~2800). Colony, mine, THE KILN in its crater, the research station at four radii, and
+  THE RELAY on its moon: a mast, a plant, a core and no guns. Its mast hears you and its launches go
+  where it last heard you.
+- **Gas giant** (~4200). The refinery low over the drag layer, a mine and a derelict on its moons, fuel to
+  scoop, and an atmosphere nothing hostile will follow you into.
+- **The belt** (between the mid world and the giant, slow now). **HOLLOW**, unnamed until found, with
+  Kestrel Seven's cave and a trail of its pieces pointing at the mouth from three hundred units out.
+- **Enemy world** (~5700). The Starfall core, KILO and LIMA on the world's grid, THE CUT, BASE MIKE on the
+  moon with its own plant.
+- **The Fault** (past the enemy world, at the edge). Its ring hugs it now (42 to 100 units) so passing
+  worlds cannot strip it; the lens and the beat are as before.
+- **The Pilgrim** appears two minutes in, beyond the outermost world on the clearest line, already falling
+  at 18 units per second, and hits the star six to seven minutes later unless someone changes that.
+
 ## Space
 - Sim is 2D (x, y on the ecliptic) at a fixed 120 Hz. Render maps sim (x, y) -> world (x, 0, -y).
   Near top-down perspective camera, world-fixed orientation (north up). It leads the ship by
@@ -26,9 +54,12 @@ enemy core is dark; both endings show a debrief, and a win lets you keep flying.
 - Scale: ship ~1 unit, planets 55–190, star 200–250, outer orbit ~4000.
 
 ## Gravity
-- Per body: a = GM / r^2 clamped near the centre, faded to zero across the outer quarter of the
-  sphere of influence (planets 7 radii, moons 4.5, star 22). The star is a gentle pull everywhere
-  (about 0.5 at the home world) and a killer inside two radii.
+- Per body: a = GM / r^2 (linear inside the body), faded to zero across the outer quarter of the sphere
+  of influence (planets 5 radii, the giant 5.5, moons 4.5). The star has a deep near well that ends at
+  3 radii and a weak far field with no fade; every planet's rail is Keplerian in that far field, so rocks,
+  pods and hulls keep station with the world they orbit. Orbits are spaced so no two wells overlap:
+  planets on rails never fall toward each other, and anything free around them would be stripped if
+  they did (measured: a whole cluster gone in ten minutes).
 - Projectiles, pods, salvage, asteroids and AI all obey it. Belts orbit the star; clusters orbit
   planets. "The Fault" is a tiny body with a brutal well guarding rich ore and a unique module.
 - HUD shows the net gravity arrow and a 9-second predicted trajectory that stops at impact and
@@ -191,9 +222,11 @@ The map is fixed; the practical map moves with light, heat, emissions and what t
 - **Pathologies fixed.** Things inside caves and fissures settle on the floor instead of swinging through
   the hollow's centre (interior gravity is linear, so without floor friction a body oscillates). Belt rocks
   born inside a world's well are culled. The Fault now rides a Keplerian orbit so its ring is not torn
-  away by the frame mismatch. Known and left: planets ride rails four to fourteen times slower than a
-  free orbit at their radius, so free objects outside a planet's dominance radius (about 220 units for the
-  home world) drift off; the home cluster disperses within minutes and always has.
+  away by the frame mismatch.
+- Fixed in the content pass: the star's far field and Keplerian rails (see Gravity); the home cluster,
+  the Fault's ring and a free hull in home orbit now hold station over thirty minutes. Ships only damage
+  machinery above 500 units of impact energy (a ram, not a bump). Civilians, reavers and hunters detour
+  around worlds and the star.
 
 ## Rendering
 WebGL2, no textures, no external art. Instanced flat-shaded meshes with four-band quantised
