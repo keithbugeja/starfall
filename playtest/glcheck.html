@@ -1,0 +1,50 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#000}canvas{display:block}</style></head>
+<body><canvas id="c" width="640" height="360"></canvas>
+<script>
+const out = {};
+try {
+  const c = document.getElementById('c');
+  const gl = c.getContext('webgl2', { antialias: false, alpha: false });
+  if (!gl) { out.error = 'no webgl2'; }
+  else {
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    out.renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    out.version = gl.getParameter(gl.VERSION);
+    out.glsl = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+    out.colorBufferFloat = !!gl.getExtension('EXT_color_buffer_float');
+    out.colorBufferHalfFloat = !!gl.getExtension('EXT_color_buffer_half_float');
+    out.maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    out.maxSamples = gl.getParameter(gl.MAX_SAMPLES);
+    out.lineWidthRange = Array.from(gl.getParameter(gl.ALIASED_LINE_WIDTH_RANGE));
+    out.pointSizeRange = Array.from(gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE));
+    const vs = `#version 300 es
+    in vec2 p; in vec3 col; flat out vec3 v; void main(){ v=col; gl_Position=vec4(p,0.,1.);} `;
+    const fs = `#version 300 es
+    precision highp float; flat in vec3 v; out vec4 o; void main(){ o=vec4(v,1.);} `;
+    const mk=(t,s)=>{const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(sh));return sh;};
+    const pr=gl.createProgram();gl.attachShader(pr,mk(gl.VERTEX_SHADER,vs));gl.attachShader(pr,mk(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);
+    if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+    gl.useProgram(pr);
+    const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-0.8,-0.8,1,0.2,0.2, 0.8,-0.8,0.2,1,0.2, 0,0.8,0.2,0.4,1]),gl.STATIC_DRAW);
+    const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+    gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,20,0);
+    gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,3,gl.FLOAT,false,20,8);
+    // float FBO test
+    try {
+      const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA16F,64,64,0,gl.RGBA,gl.HALF_FLOAT,null);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      const fb=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+      out.fboHalfFloatStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE ? 'complete' : 'incomplete';
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    } catch(e){ out.fboHalfFloatStatus='err '+e.message; }
+    gl.viewport(0,0,640,360);gl.clearColor(0.05,0.05,0.1,1);gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    let t0=performance.now(); for(let i=0;i<200;i++){gl.clear(gl.COLOR_BUFFER_BIT);gl.drawArrays(gl.TRIANGLES,0,3);} gl.finish(); out.ms200draws=(performance.now()-t0).toFixed(1);
+    out.glError = gl.getError();
+  }
+} catch(e) { out.error = String(e); }
+window.__out = out;
+</script></body></html>

@@ -1,0 +1,13 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+page.on('console', m => console.log('[console:' + m.type() + ']', m.text().slice(0, 2000)));
+page.on('pageerror', e => console.log('[pageerror]', e.message.slice(0, 3000), e.stack ? e.stack.slice(0, 1500) : ''));
+await page.goto(process.argv[2] ?? 'http://localhost:4173/');
+await page.waitForTimeout(4000);
+const has = await page.evaluate(() => !!(window.__sf));
+console.log('harness present:', has);
+const body = await page.evaluate(() => document.body.innerText.slice(0, 2000));
+if (body) console.log('BODY TEXT:', body);
+await page.screenshot({ path: 'playtest/out/debug.png' });
+await browser.close();
