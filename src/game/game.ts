@@ -96,6 +96,7 @@ export class Game {
   audioLog: string[] = [];
   tracked = 0;          // enemies that currently hold the player as a sensed target
   trackedSince = -1e9;
+  private trackers = new Set<number>();
   private lastTick = -1e9;
 
   constructor(public canvas: HTMLCanvasElement) {
@@ -315,10 +316,16 @@ export class Game {
     this.checkDeath(dt);
     // who has us: the count of enemies holding the player as a sensed target, and the moment it drops to none
     {
-      let n = 0;
-      for (const s of w.ships) if (s.alive && s.faction === 'enemy' && s.ai && s.ai.target === p && w.time - s.ai.lastSeen < 1.2) n++;
+      let n = 0, trackersAlive = 0;
+      for (const s of w.ships) {
+        if (!s.faction || s.faction !== 'enemy' || !s.ai) continue;
+        if (s.alive && s.ai.target === p && w.time - s.ai.lastSeen < 1.2) n++;
+        if (s.alive && this.trackers.has(s.id)) trackersAlive++;
+      }
       if (n > 0 && this.tracked === 0) { this.trackedSince = w.time; sfx(w, 'tracked', null, 0.6); }
-      if (n === 0 && this.tracked > 0 && w.time - this.trackedSince > 2) sfx(w, 'lost', null, 0.6);
+      // the falling tone means they lost us, not that we killed them: only when a tracker is still out there
+      if (n === 0 && this.tracked > 0 && w.time - this.trackedSince > 2 && trackersAlive > 0) sfx(w, 'lost', null, 0.6);
+      if (n > 0) { this.trackers.clear(); for (const s of w.ships) if (s.alive && s.faction === 'enemy' && s.ai && s.ai.target === p) this.trackers.add(s.id); }
       if (n > 0 && w.time - this.lastTick > 1.4) { this.lastTick = w.time; sfx(w, 'tick', null, 0.5); }
       this.tracked = n;
     }
