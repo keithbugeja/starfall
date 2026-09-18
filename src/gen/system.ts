@@ -61,7 +61,7 @@ export function generateSystem(seed: number, seedName: string): World {
       default: type = rng.chance(0.5) ? 'ice' : 'rock'; radius = 70 + rng.int(30); g = 4.5 + rng.next() * 1.5; rough = 0.13; pal = type === 'ice' ? PALETTES.ice : PALETTES.rock2; break;
     }
     const period = 1500 + orbit * 1.4 + rng.int(800);
-    const body = createBody({ name: role === 'enemy' ? names.world() : names.world(), kind: type === 'gas' ? 'gas' : 'planet', type, radius, surfaceG: g, roughness: rough, orbit: { parent: star, radius: orbit, period, phase }, palette: pal, seed: seed + 101 * (i + 1), landable: type !== 'gas', soiMul: type === 'gas' ? 5 : 6 });
+    const body = createBody({ name: role === 'enemy' ? names.world() : names.world(), kind: type === 'gas' ? 'gas' : 'planet', type, radius, surfaceG: g, roughness: rough, orbit: { parent: star, radius: orbit, period, phase }, palette: pal, seed: seed + 101 * (i + 1), landable: type !== 'gas', soiMul: type === 'gas' ? 5.5 : 7 });
     w.bodies.push(body);
     const plan: PlanetPlan = { body, role, moons: [] };
     plans.push(plan);
@@ -70,7 +70,7 @@ export function generateSystem(seed: number, seedName: string): World {
     let mOrbit = radius * 2.8 + 40;
     for (let m = 0; m < moonCount; m++) {
       const mr = 22 + rng.int(18);
-      const moon = createBody({ name: names.moon(), kind: 'moon', type: rng.chance(0.5) ? 'ice' : 'rock', radius: mr, surfaceG: 2.2 + rng.next() * 1.4, roughness: 0.12 + rng.next() * 0.06, orbit: { parent: body, radius: mOrbit, period: 260 + mOrbit * 1.2 + rng.int(200), phase: rng.next() * TAU }, palette: rng.chance(0.5) ? PALETTES.ice : PALETTES.rock2, seed: seed + 977 * (i + 1) + m * 31, soiMul: 3.5 });
+      const moon = createBody({ name: names.moon(), kind: 'moon', type: rng.chance(0.5) ? 'ice' : 'rock', radius: mr, surfaceG: 2.2 + rng.next() * 1.4, roughness: 0.12 + rng.next() * 0.06, orbit: { parent: body, radius: mOrbit, period: 260 + mOrbit * 1.2 + rng.int(200), phase: rng.next() * TAU }, palette: rng.chance(0.5) ? PALETTES.ice : PALETTES.rock2, seed: seed + 977 * (i + 1) + m * 31, soiMul: 4.5 });
       w.bodies.push(moon);
       plan.moons.push(moon);
       mOrbit += mr * 3 + 70 + rng.int(40);

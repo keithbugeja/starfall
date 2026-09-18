@@ -299,6 +299,107 @@ async function autoFight(page, seconds) {
 }
 
 const moreScenarios = {
+  async gallery({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    let st = await api.state(page);
+    const home = st.bodies.find(b => b.kind === 'planet');
+    const gas = st.bodies.find(b => b.kind === 'gas');
+    const hs = st.stations[0];
+    // 1. harbour with the home planet in frame: hover above the harbour looking from the far side
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 1.2), [hs.x + 30, hs.y - 20]);
+    await api.run(page, { thrust: 1, boost: true }, 0.6);
+    await api.shot(page, 'g1_harbour', 60);
+    // 2. gas giant from a distance at speed (camera high)
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 100, 1.57), [gas.x + gas.r * 1.6, gas.y - gas.r * 2.2]);
+    await api.run(page, { thrust: 1, boost: true }, 1.0);
+    await api.shot(page, 'g2_gasgiant', 60);
+    // 3. combat: spawn a pack and fight for 4 seconds
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [home.x + 700, home.y + 300]);
+    for (let i = 0; i < 3; i++) await page.evaluate(([k, i]) => window.__sf.spawnEnemy(k, 90 + i * 15, 40 - i * 40, 'hunt'), [i === 2 ? 'lancer' : 'wasp', i]);
+    await autoFight(page, 5);
+    await api.shot(page, 'g3_combat', 20);
+    // 4. the enemy core from above
+    const core = st.pads.find(p => p.kind === 'core');
+    const eb = st.bodies.find(b => b.name === core.body);
+    await page.evaluate(([x, y, a]) => window.__sf.teleport(x, y, 0, 0, a), [eb.x + Math.cos(core.angle) * (core.height + 45), eb.y + Math.sin(core.angle) * (core.height + 45), core.angle]);
+    await api.run(page, {}, 1.5);
+    await api.shot(page, 'g4_enemycore', 60);
+    // 5. the belt
+    const mid = st.bodies.filter(b => b.kind === 'planet' && b.name !== 'THE FAULT')[2];
+    const beltR = (mid.x ** 2 + mid.y ** 2) ** 0.5 * 1.25;
+    await page.evaluate(([x, y]) => window.__sf.teleport(x, y, 0, 0, 0), [beltR, 0]);
+    await api.run(page, {}, 0.5);
+    await api.shot(page, 'g5_belt', 60);
+    // 6. the map
+    await api.mode(page, 'map');
+    await api.shot(page, 'g6_map', 10);
+    st = await api.state(page);
+    console.log('gallery done', st.mode);
+  },
+  async tour({ page }) {
+    // launch -> land at the nearest home colony -> refuel -> launch -> dock at the harbour
+    await api.manual(page, true);
+    await api.newGame(page, 2024);
+    await api.launch(page);
+    let st = await api.state(page);
+    const home = st.bodies.find(b => b.kind === 'planet');
+    const colony = home.pads.find(p => p.kind === 'colony');
+    const t0 = st.time;
+    const res = await autoLand(page, home.name, colony.name, 150);
+    st = await api.state(page);
+    console.log('LAND', res.landed ? 'OK' : (res.alive ? 'NOT LANDED' : 'DEAD'), 'hull', res.hull.toFixed(0), 'fuel', res.fuel.toFixed(0), 'took', (st.time - t0).toFixed(0), 's');
+    if (!res.landed) console.log(res.log.slice(-6));
+    await api.shot(page, 'tour_landed');
+    await api.run(page, {}, 8);
+    st = await api.state(page);
+    console.log('after refuel: fuel', st.player.fuel.toFixed(0), 'hull', st.player.hull.toFixed(0), 'score', st.score);
+    await api.run(page, { thrust: 1 }, 3);
+    st = await api.state(page);
+    console.log('relaunched: alt speed', st.player.speed.toFixed(1), 'landed', st.player.landed);
+    const t1 = st.time;
+    const dock = await autoDock(page, st.stations[0].name, 200);
+    st = await api.state(page);
+    console.log('DOCK', dock.docked ? 'OK' : (dock.alive ? 'NOT DOCKED' : 'DEAD'), 'hull', dock.hull.toFixed(0), 'took', (st.time - t1).toFixed(0), 's', 'mode', st.mode);
+    if (!dock.docked) console.log(dock.log.slice(-6));
+    await api.shot(page, 'tour_docked');
+  },
+  async upgrades({ page }) {
+    await api.manual(page, true);
+    await api.newGame(page, 55);
+    await api.launch(page);
+    await page.evaluate(() => window.__sf.buyAll());
+    for (const wk of ['pulse', 'scatter', 'rail', 'mass']) {
+      await page.evaluate(k => window.__sf.weapon(k), wk);
+      await api.run(page, { fire: true, turn: 0.3 }, 1.5);
+      await api.run(page, { thrust: 1, strafe: 1, retro: 0 }, 1);
+      await api.run(page, { retro: 1 }, 1);
+      const st = await api.state(page);
+      console.log(wk, 'proj', st.projectiles, 'heat', st.player.heat.toFixed(2), 'fuel', st.player.fuel.toFixed(0), 'hull', st.player.hull.toFixed(0), 'alive', st.player.alive);
+    }
+    await api.shot(page, 'upgrades');
+  },
+  async audio({ page }) {
+    await api.manual(page, true);
+    await page.evaluate(() => window.__sf.unlockAudio());
+    await api.launch(page);
+    await api.run(page, { thrust: 1, fire: true }, 2);
+    await page.evaluate(() => window.__sf.forceEvent('flare'));
+    await api.run(page, { thrust: 1, boost: true }, 2);
+    const st = await api.state(page);
+    console.log('audio run ok, alive', st.player.alive);
+  },
+  async perf({ page }) {
+    await api.manual(page, true);
+    await api.launch(page);
+    const ms = await page.evaluate(() => { const t = performance.now(); window.__sf.step(1200); return performance.now() - t; });
+    const st = await api.state(page);
+    console.log('1200 sim steps (10 s) took', ms.toFixed(0), 'ms =>', (ms / 1200).toFixed(3), 'ms/step; ships', st.ships.length, 'asteroids', st.asteroids);
+    // render cost
+    const rt = await page.evaluate(() => new Promise(r => { let n = 0; const t = performance.now(); const f = () => { if (++n >= 30) r((performance.now() - t) / 30); else requestAnimationFrame(f); }; requestAnimationFrame(f); }));
+    console.log('avg frame (swiftshader)', rt.toFixed(1), 'ms');
+  },
   async dock({ page }) {
     await api.manual(page, true);
     let ok = 0, n = 0;

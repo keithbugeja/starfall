@@ -128,9 +128,9 @@ export function drawFlightHud(g: Game): void {
     const cx = W / 2, cy = Hh - 168 * s;
     drawText(H, 'LANDING', cx, cy - 34 * s, 10 * s, C.amber[0], C.amber[1], C.amber[2], 0.8, 'center');
     const c1 = okVn ? C.green : C.red, c2 = okVt ? C.green : C.red, c3 = okA ? C.green : C.red;
-    drawText(H, `DOWN ${vn.toFixed(1)}`, cx - 92 * s, cy - 16 * s, 12 * s, c1[0], c1[1], c1[2], 0.95, 'center');
+    drawText(H, `DOWN ${vn.toFixed(1)}`, cx - 118 * s, cy - 16 * s, 12 * s, c1[0], c1[1], c1[2], 0.95, 'center');
     drawText(H, `DRIFT ${vt.toFixed(1)}`, cx, cy - 16 * s, 12 * s, c2[0], c2[1], c2[2], 0.95, 'center');
-    drawText(H, `TILT ${(err * 57.3).toFixed(0)}°`, cx + 92 * s, cy - 16 * s, 12 * s, c3[0], c3[1], c3[2], 0.95, 'center');
+    drawText(H, `TILT ${(err * 57.3).toFixed(0)}°`, cx + 118 * s, cy - 16 * s, 12 * s, c3[0], c3[1], c3[2], 0.95, 'center');
     drawText(H, `LIMITS ${(LAND_VN * tol).toFixed(1)} / ${(LAND_VT * tol).toFixed(1)} / ${(LAND_ANG * tol * 57.3).toFixed(0)}°`, cx, cy + 2 * s, 8 * s, C.dim[0], C.dim[1], C.dim[2], 0.7, 'center');
     void landingAlt;
   }
@@ -212,8 +212,10 @@ export function drawFlightHud(g: Game): void {
     return [rcx + dx * k, rcy - dy * k, true];
   };
   for (const b of w.bodies) {
-    const [x, y, inR] = toRadar(b.pos.x, b.pos.y);
+    const [x, y, inR0] = toRadar(b.pos.x, b.pos.y);
     const col = b.kind === 'star' ? C.amber : b.pads.some(pd => pd.kind === 'core' && pd.alive) ? C.red : b.palette.high;
+    const dd = Math.hypot(b.pos.x - p.pos.x, b.pos.y - p.pos.y);
+    const inR = inR0 && dd + b.radius < range;
     if (inR) H.circle2(x, y, Math.max(2 * s, b.radius * rr / range), 16, col[0], col[1], col[2], 0.7, 1.2);
     else if (b.kind === 'star' || b.kind !== 'moon') H.line2(x, y, x + (rcx - x) * 0.06, y + (rcy - y) * 0.06, col[0], col[1], col[2], 0.5, 2);
   }

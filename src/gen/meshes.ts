@@ -138,7 +138,10 @@ export function buildPlanetMesh(b: Body): MeshData {
     if (b.kind === 'gas') {
       const warp = fbm3(Math.cos(lon) * 1.5, lat * 4.0, Math.sin(lon) * 1.5, 2, b.seed) * 0.35;
       const band = Math.sin(lat * 9 + warp * 6 + b.seed % 7) * 0.5 + 0.5;
-      const q = band < 0.33 ? pal.low : band < 0.66 ? pal.mid : pal.high;
+      // storms: large blotches that break the bands so the sphere reads from any angle
+      const storm = fbm3(Math.cos(lon) * 2.2 + 5, lat * 3.0, Math.sin(lon) * 2.2 + 9, 3, b.seed + 13);
+      const v = band + storm * 0.55;
+      const q = v < 0.3 ? pal.low : v < 0.66 ? pal.mid : pal.high;
       return q;
     }
     // ice caps for icy/rocky worlds at high latitude
@@ -168,6 +171,26 @@ export function buildPlanetMesh(b: Body): MeshData {
         // split the quad along the diagonal that makes the facets visibly irregular
         if ((i + j) & 1) { triOut(mb, p00, p10, p11, col); triOut(mb, p00, p11, p01, col); }
         else { triOut(mb, p00, p10, p01, col); triOut(mb, p10, p11, p01, col); }
+      }
+    }
+  }
+  // ring system for gas giants: a flat faceted annulus in the ecliptic
+  if (b.kind === 'gas') {
+    const rng = new Rng(b.seed + 99);
+    const r0 = R * 1.35, r1 = R * (1.9 + rng.next() * 0.3);
+    const n = 48;
+    const gap = 0.5 + rng.next() * 0.3; // a Cassini-like division
+    for (let i = 0; i < n; i++) {
+      const a0 = (i / n) * TAU, a1 = ((i + 1) / n) * TAU;
+      const shade = 0.75 + (i % 2) * 0.12;
+      const col = [pal.mid[0] * 0.55 * shade, pal.mid[1] * 0.55 * shade, pal.mid[2] * 0.55 * shade];
+      const bands: [number, number][] = [[r0, r0 + (r1 - r0) * gap * 0.93], [r0 + (r1 - r0) * gap * 1.05, r1]];
+      for (const [ra, rb] of bands) {
+        const p0: V3 = [Math.cos(a0) * ra, 0, -Math.sin(a0) * ra], p1: V3 = [Math.cos(a1) * ra, 0, -Math.sin(a1) * ra];
+        const p2: V3 = [Math.cos(a1) * rb, 0, -Math.sin(a1) * rb], p3: V3 = [Math.cos(a0) * rb, 0, -Math.sin(a0) * rb];
+        // both windings so the ring is visible from above and below; normal up for the lit face
+        mb.triN(p0[0], p0[1], p0[2], p2[0], p2[1], p2[2], p1[0], p1[1], p1[2], 0, 1, 0, col[0], col[1], col[2]);
+        mb.triN(p0[0], p0[1], p0[2], p3[0], p3[1], p3[2], p2[0], p2[1], p2[2], 0, 1, 0, col[0], col[1], col[2]);
       }
     }
   }

@@ -95,7 +95,7 @@ export function createBody(spec: BodySpec): Body {
     vel: { x: 0, y: 0 },
     radius: spec.radius,
     mass: spec.surfaceG * spec.radius * spec.radius,
-    soi: spec.radius * (spec.soiMul ?? (spec.kind === 'moon' ? 4 : 6)),
+    soi: spec.radius * (spec.soiMul ?? (spec.kind === 'moon' ? 4.5 : 7)),
     surfaceG: spec.surfaceG,
     roughness: spec.roughness ?? 0,
     segments,

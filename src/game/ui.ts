@@ -233,6 +233,12 @@ export function drawMap(g: Game): void {
   drawText(H, w.star.name, sx, sy + Math.max(4 * s, w.star.radius * scale) + 6 * s, 9 * s, C.amber[0], C.amber[1], C.amber[2], 0.8, 'center');
   interface Sel { name: string; x: number; y: number; nav: NavTarget; col: number[]; }
   const sels: Sel[] = [];
+  // belts and clusters as faint dust
+  for (const a of w.asteroids) {
+    if (!a.alive || a.size < 2) continue;
+    const [x, y] = toS(a.pos.x, a.pos.y);
+    H.line2(x, y, x + 0.6 * s, y, a.rich ? C.amber[0] : C.dim[0], a.rich ? C.amber[1] : C.dim[1], a.rich ? C.amber[2] : C.dim[2], 0.35, 1.2 * s);
+  }
   for (const b of w.bodies) {
     if (b.orbit) {
       const [ox, oy] = toS(b.orbit.parent.pos.x, b.orbit.parent.pos.y);
@@ -258,7 +264,7 @@ export function drawMap(g: Game): void {
     const [x, y] = toS(st.pos.x, st.pos.y);
     const col = st.alive ? C.cyan : C.dim;
     H.rect2(x - 4 * s, y - 4 * s, 8 * s, 8 * s, col[0], col[1], col[2], 0.95, 1.4);
-    drawText(H, st.name, x, y + 8 * s, 8 * s, col[0], col[1], col[2], 0.85, 'center');
+    drawText(H, st.name, x + 8 * s, y - 3 * s, 7 * s, col[0], col[1], col[2], 0.85, 'left');
     if (st.alive) sels.push({ name: st.name, x, y, nav: { name: st.name, station: st }, col });
   }
   // events

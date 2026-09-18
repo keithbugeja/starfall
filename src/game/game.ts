@@ -447,10 +447,10 @@ export class Game {
       if (alt < 110) {
         const k = 1 - clamp(alt / 110, 0, 1);
         // frame both the ship and the ground: look part-way toward the surface, zoom to fit
-        const toward = Math.min(alt * 0.5, 45);
+        const toward = Math.min(alt * 0.55, 50);
         tx = lerp(tx, p.pos.x + dir.x * lead * 0.3 + groundDir.x * toward, k);
         ty = lerp(ty, p.pos.y + dir.y * lead * 0.3 + groundDir.y * toward, k);
-        const fit = clamp(alt * 0.95 + 32, 36, 125);
+        const fit = clamp(alt * 1.3 + 34, 40, 140);
         height = lerp(height, Math.max(fit, 36 + speed * 0.4), k);
         tiltTarget = lerp(0.3, 0.06, k);
       }
@@ -540,7 +540,7 @@ export class Game {
     this.post.beginVector();
     this.worldLines.clear();
     this.hudLines.clear();
-    if (this.mode !== 'title') this.drawWorldVectors();
+    if (this.mode === 'flight' || this.mode === 'gameover') this.drawWorldVectors();
     if (this.mode === 'flight' || this.mode === 'pause' || (this.mode === 'help' && this.helpReturn === 'flight')) {
       if (w.player.alive) drawFlightHud(this);
       else drawDeath(this);
@@ -563,6 +563,9 @@ export class Game {
     const targetFade = 1 - this.overlayDim;
     this.fade = damp(this.fade, targetFade, 12, dt);
     this.post.fade = this.fade * (w.flare.active ? 1 + 0.25 * w.flare.intensity : 1);
+    // world-space vector lines (limbs, pads, HUD in the world) share the vector layer with the overlay text,
+    // so they are drawn dimmer by hand: overlays clear the world-line batch instead
+    this.post.vecFade = 1;
     this.post.finish(w.time);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.renderTime = performance.now();
@@ -582,6 +585,11 @@ export class Game {
           const a = (i / n) * TAU + w.time * 0.02;
           const r0 = b.radius * 1.02, r1 = b.radius * (1.12 + 0.06 * Math.sin(w.time * 1.7 + i * 2.1)) * (w.flare.active ? 1.3 : 1);
           L.seg(b.pos.x + Math.cos(a) * r0, 0, -(b.pos.y + Math.sin(a) * r0), b.pos.x + Math.cos(a) * r1, 0, -(b.pos.y + Math.sin(a) * r1), 1.4, 0.9, 0.4, 0.5, 1.5);
+        }
+        // heat haze: faint rings out to the danger radius so the star is felt before it is seen
+        for (let k = 1; k <= 3; k++) {
+          const r = b.radius * (1 + k * 0.3) + Math.sin(w.time * 0.8 + k) * 3;
+          L.circleWorld(b.pos.x, 0.05, -b.pos.y, r, 64, 1.2, 0.6, 0.2, 0.16 / k, 1.2);
         }
         continue;
       }
@@ -684,7 +692,7 @@ export class Game {
         }
         if (T.impact) {
           const s = upp * 7;
-          const c = T.impactSpeed > LAND_VN * p.stats.landTol ? [1, 0.35, 0.3] : [0.5, 1, 0.6];
+          const c = T.impactBody?.kind === 'gas' ? [0.5, 0.8, 1.0] : T.impactBody?.kind === 'star' ? [1, 0.6, 0.2] : T.impactSpeed > LAND_VN * p.stats.landTol ? [1, 0.35, 0.3] : [0.5, 1, 0.6];
           L.seg(T.impactX - s, 0.2, -(T.impactY - s), T.impactX + s, 0.2, -(T.impactY + s), c[0], c[1], c[2], 0.9, 1.5);
           L.seg(T.impactX - s, 0.2, -(T.impactY + s), T.impactX + s, 0.2, -(T.impactY - s), c[0], c[1], c[2], 0.9, 1.5);
         }

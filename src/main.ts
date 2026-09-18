@@ -4,7 +4,8 @@ import { hashString } from './engine/math';
 import type { Controls } from './engine/input';
 import { forceEvent } from './sim/director';
 import { spawnAiShip } from './sim/ai';
-import type { EventKind, ShipKind } from './sim/world';
+import type { EventKind, ShipKind, WeaponKind } from './sim/world';
+import { applyUpgrades, installWeapon } from './sim/upgrades';
 
 const canvas = document.getElementById('gl') as HTMLCanvasElement;
 let game: Game;
@@ -37,9 +38,17 @@ const harness = {
   teleport(x: number, y: number, vx = 0, vy = 0, angle = 0): void {
     const p = game.world.player;
     p.pos.x = x; p.pos.y = y; p.vel.x = vx; p.vel.y = vy; p.angle = angle; p.landed = null; p.docked = null;
+    p.alive = true; p.hull = p.hullMax; game.respawnTimer = 0; game.deathTime = -1;
     game.camPos.x = x; game.camPos.y = y; game.mode = 'flight';
   },
   give(credits: number): void { game.world.credits += credits; },
+  unlockAudio(): void { game.audio.unlock(); },
+  buyAll(): void {
+    const p = game.world.player;
+    for (const u of ['retro', 'strafe', 'struts', 'tank', 'engine', 'armour', 'cargo', 'gravdamp', 'sensors', 'tractor', 'heatshield']) if (!p.upgrades.includes(u)) p.upgrades.push(u);
+    applyUpgrades(p);
+  },
+  weapon(kind: string): void { installWeapon(game.world.player, kind as WeaponKind); },
   nav(name: string): void {
     const w = game.world;
     const st = w.stations.find(s => s.name === name);

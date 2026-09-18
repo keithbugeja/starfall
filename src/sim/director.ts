@@ -15,6 +15,7 @@ interface DirectorState {
   lastEventKind: EventKind | null;
   flareCooldown: number;
   acc: number;
+  opening: number;
 }
 
 const D = new WeakMap<World, DirectorState>();
@@ -22,7 +23,7 @@ const D = new WeakMap<World, DirectorState>();
 function state(w: World): DirectorState {
   let d = D.get(w);
   if (!d) {
-    d = { initialized: false, eventTimer: 45, trafficTimer: 20, economyTimer: 0, nextEventId: 1, lastEventKind: null, flareCooldown: 300, acc: 0 };
+    d = { initialized: false, eventTimer: 16, trafficTimer: 20, economyTimer: 0, nextEventId: 1, lastEventKind: null, flareCooldown: 300, acc: 0, opening: 0 };
     D.set(w, d);
   }
   return d;
@@ -90,7 +91,9 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
   if (d.eventTimer <= 0) {
     d.eventTimer = Math.max(30, 75 - w.threat * 4) + w.rng.next() * 25;
     const active = w.events.filter(e => !e.resolved && !e.failed).length;
-    if (active < 3) spawnEvent(w, d);
+    if (d.opening === 0) { d.opening = 1; d.eventTimer = 50; openingSalvage(w, d); }
+    else if (d.opening === 1) { d.opening = 2; d.eventTimer = 60; openingRaid(w, d); }
+    else if (active < 3) spawnEvent(w, d);
   }
   d.flareCooldown -= dt;
   updateEvents(w, dt);
@@ -152,6 +155,50 @@ function newEvent(w: World, kind: EventKind, pos: V2, label: string, timer: numb
   const e: GameEvent = { id: state(w).nextEventId++, kind, pos, target: null, ships: [], timer, duration: timer, phase: 0, resolved: false, failed: false, announced: true, label, reward, data: {}, startTime: w.time };
   w.events.push(e);
   return e;
+}
+
+/** Opening beat one: a debris field within sight of the harbour, salvage sells at the station. */
+function openingSalvage(w: World, d: DirectorState): void {
+  const st = w.respawnStation ?? w.stations[0];
+  const b = st.orbit ? st.orbit.parent : w.bodies[1];
+  const a = Math.atan2(st.pos.y - b.pos.y, st.pos.x - b.pos.x) + 0.55;
+  const r = st.orbit ? st.orbit.radius : b.radius * 2.5;
+  const x = b.pos.x + Math.cos(a) * r, y = b.pos.y + Math.sin(a) * r;
+  const v = Math.sqrt(b.mass / r);
+  const vx = b.vel.x - Math.sin(a) * v, vy = b.vel.y + Math.cos(a) * v;
+  spawnPickup(w, 'wreck', x, y, vx, vy, 0, null, 'WRECK');
+  for (let i = 0; i < 5; i++) {
+    const aa = w.rng.next() * TAU;
+    const p = spawnPickup(w, 'salvage', x + Math.cos(aa) * 5, y + Math.sin(aa) * 5, vx + Math.cos(aa) * 1.2, vy + Math.sin(aa) * 1.2, 45);
+    p.life = 600;
+  }
+  spawnPickup(w, 'fuel', x + 3, y - 3, vx, vy, 40).life = 600;
+  const e = newEvent(w, 'salvage', { x, y }, `DEBRIS FIELD NEAR ${st.name}`, 400, 0);
+  e.data.n = 5;
+  comm(w, 'CONTROL', `A FREIGHTER BROKE UP NEAR ${st.name} LAST NIGHT. FLY THROUGH THE DEBRIS TO COLLECT IT. IT SELLS AT ANY STATION.`, [0.6, 0.9, 1], 2, { x, y });
+  d.lastEventKind = 'salvage';
+}
+
+/** Opening beat two: a raid on the nearest home colony, one reaver, one escort. */
+function openingRaid(w: World, d: DirectorState): void {
+  const st = w.respawnStation ?? w.stations[0];
+  const colonies = livingColonies(w).filter(p => p.kind === 'colony' && p.population > 0);
+  if (!colonies.length) return;
+  const target = colonies.slice().sort((a, b) => dist(padPos(a), st.pos) - dist(padPos(b), st.pos))[0];
+  const tp = padPos(target, 0);
+  const dir = fromEnemyDir(w, tp);
+  const e = newEvent(w, 'raid', tp, `RAID ON ${target.name}`, 150, 300);
+  e.target = target;
+  const spawn = { x: tp.x - dir.x * 240, y: tp.y - dir.y * 240 };
+  const rv = spawnAiShip(w, 'reaver', 'enemy', spawn.x, spawn.y, Math.atan2(dir.y, dir.x), 'raid', target.body);
+  rv.ai!.home = target;
+  e.ships.push(rv);
+  const ws = spawnAiShip(w, 'wasp', 'enemy', spawn.x - dir.x * 12, spawn.y - dir.y * 12, Math.atan2(dir.y, dir.x), 'hunt', target.body);
+  ws.ai!.targetPos = { x: tp.x, y: tp.y };
+  e.ships.push(ws);
+  e.data.popStart = target.population;
+  comm(w, target.name, `DISTRESS: A REAVER IS INBOUND ON ${target.name}. IT WILL LIFT OUR PEOPLE. KESTREL, PLEASE.`, [1, 0.5, 0.3], 3, tp);
+  d.lastEventKind = 'raid';
 }
 
 /** Test hook: force an event of a given kind now. */

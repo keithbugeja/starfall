@@ -56,14 +56,15 @@ uniform sampler2D u_bloom2;
 uniform float u_bloomStrength;
 uniform float u_flicker;
 uniform float u_time;
-uniform float u_fade; // 0 = black, 1 = normal
+uniform float u_fade; // world layer brightness: 0 = black, 1 = normal
+uniform float u_vecFade; // vector layer brightness
 out vec4 o;
 void main() {
   vec3 w = texture(u_world, v_uv).rgb;
   vec3 v = texture(u_vec, v_uv).rgb;
   vec3 b = texture(u_bloom, v_uv).rgb;
   vec3 b2 = texture(u_bloom2, v_uv).rgb;
-  vec3 c = w + v * u_flicker + (b * 0.7 + b2 * 0.5) * u_bloomStrength;
+  vec3 c = w * u_fade + v * u_flicker * u_vecFade + (b * 0.7 + b2 * 0.5) * u_bloomStrength * mix(u_fade, 1.0, 0.6);
   // gentle tone: keep saturated highlights from clipping to white too fast
   c = c / (1.0 + c * 0.12);
   // vignette
@@ -73,7 +74,7 @@ void main() {
   // very faint scan modulation (kept subtle for readability)
   c *= 0.97 + 0.03 * sin(v_uv.y * 1200.0 + u_time * 0.3);
   c = pow(max(c, 0.0), vec3(1.0 / 1.15));
-  o = vec4(c * u_fade, 1.0);
+  o = vec4(c, 1.0);
 }`;
 
 export class PostPipeline {
@@ -98,6 +99,7 @@ export class PostPipeline {
   bloomThreshold = 0.85;
   flicker = 1.0;
   fade = 1.0;
+  vecFade = 1.0;
   private persistFlip = false;
 
   constructor(private gl: WebGL2RenderingContext, w: number, h: number) {
@@ -217,6 +219,7 @@ export class PostPipeline {
     gl.uniform1f(this.pComposite.u('u_flicker'), this.flicker);
     gl.uniform1f(this.pComposite.u('u_time'), time);
     gl.uniform1f(this.pComposite.u('u_fade'), this.fade);
+    gl.uniform1f(this.pComposite.u('u_vecFade'), this.vecFade);
     this.fs(null, this.width, this.height);
     gl.bindVertexArray(null);
   }
