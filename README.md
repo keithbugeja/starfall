@@ -6,6 +6,10 @@ fallen star. TypeScript + WebGL2 + Vite, no textures, no external art, all sound
 
 ## Play
 
+Play online: https://keithbugeja.github.io/starfall/ (deployed from `main` by GitHub Actions).
+
+Or locally:
+
 ```
 npm install
 npm run dev
