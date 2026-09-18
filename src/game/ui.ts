@@ -385,7 +385,7 @@ export function drawGameOver(g: Game): void {
   const s = g.dpr;
   const w = g.world;
   dim(g, 0.7);
-  const won = w.coreDestroyed;
+  const won = w.coreDestroyed && w.lives > 0;
   const title = won ? 'SYSTEM SECURED' : 'PATROL ENDED';
   const col = won ? C.green : C.red;
   drawText(H, title, W / 2, Hh * 0.16, 34 * s, col[0], col[1], col[2], 0.95, 'center', 2.5);

@@ -305,6 +305,17 @@ export class Game {
       }
     }
     this.landedServices(dt);
+    if (p.docked && !p.docked.alive) {
+      // the station died under us: thrown clear with a warning
+      const st = p.docked;
+      p.docked = null;
+      p.pos.x = st.pos.x + 20; p.pos.y = st.pos.y;
+      p.vel.x = st.vel.x + 15; p.vel.y = st.vel.y;
+      p.invuln = 3;
+      this.mode = 'flight';
+      comm(w, 'KESTREL', `${st.name} IS BREAKING UP. EMERGENCY LAUNCH.`, [1, 0.5, 0.3], 3);
+      w.screenShake = 1;
+    }
     pruneShips(w);
     this.checkDeath(dt);
     // consume sim-side effects

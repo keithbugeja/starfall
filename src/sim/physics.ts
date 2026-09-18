@@ -65,9 +65,10 @@ export function stepShip(w: World, s: Ship, c: Controls, dt: number): void {
   s.angVel = damp(s.angVel, turnTarget, 18, dt);
   s.angle = wrapAngle(s.angle + s.angVel * dt);
 
-  // forces
+  // forces: gravity plus engine acceleration (kept separate so the speed cap can shape it)
   const gmag = gravityAt(w, s.pos.x, s.pos.y, gAcc);
-  let ax = gAcc.x * st.gravMul, ay = gAcc.y * st.gravMul;
+  const gx = gAcc.x * st.gravMul, gy = gAcc.y * st.gravMul;
+  let ax = 0, ay = 0;
   const cx = Math.cos(s.angle), cy = Math.sin(s.angle);
   let thrust = hasFuel ? clamp(c.thrust, 0, 1) : 0;
   const boosting = hasFuel && c.boost && thrust > 0 && !s.overheated;
@@ -97,19 +98,21 @@ export function stepShip(w: World, s: Ship, c: Controls, dt: number): void {
   }
   s.strafing = strafe;
 
-  s.vel.x += ax * dt; s.vel.y += ay * dt;
-
-  // soft speed cap: only while under power. Coasting is Newtonian, so burn-and-coast and
-  // slingshot gains are kept. A faint drag far above any cap stops runaway numbers.
+  // speed cap: above the cap, engine thrust may still redirect the ship but cannot push it
+  // faster along its velocity. Nothing ever brakes on its own: coasting is Newtonian, so
+  // burn-and-coast and slingshot gains are kept. A faint drag far above any cap stops runaway numbers.
   const cap = boosting ? st.boostMax : st.maxSpeed;
   const sp = Math.hypot(s.vel.x, s.vel.y);
-  const powered = thrust > 0 || retro > 0 || strafe !== 0;
-  if (powered && sp > cap) {
-    const excess = sp - cap;
-    const decel = excess * 0.7 + 2;
-    const k = Math.max(0, 1 - (decel / sp) * dt);
-    s.vel.x *= k; s.vel.y *= k;
-  } else if (sp > 220) {
+  if (sp > cap && (ax !== 0 || ay !== 0)) {
+    const vx = s.vel.x / sp, vy = s.vel.y / sp;
+    const along = ax * vx + ay * vy;
+    if (along > 0) {
+      // ease in over the last 15% below the cap so the limit does not feel like a wall
+      ax -= along * vx; ay -= along * vy;
+    }
+  }
+  s.vel.x += (gx + ax) * dt; s.vel.y += (gy + ay) * dt;
+  if (sp > 220) {
     const k = Math.max(0, 1 - ((sp - 220) * 0.5 / sp) * dt);
     s.vel.x *= k; s.vel.y *= k;
   }

@@ -184,6 +184,8 @@ const scenarios = {
     await api.shot(page, 'fly_boost');
     const s3 = await api.state(page);
     console.log('after boost', s3.player);
+    await api.run(page, { thrust: 1 }, 1);
+    console.log('thrust 1s after boost (must not brake):', (await api.state(page)).player.speed.toFixed(1));
     await api.run(page, { fire: true }, 1);
     await api.shot(page, 'fly_fire');
     await api.run(page, {}, 3);

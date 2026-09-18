@@ -181,6 +181,23 @@ export function generateSystem(seed: number, seedName: string): World {
   };
   const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: clearOrbit(home.body, home.body.radius * 2.9), period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
   harbour.upgrades = ['retro', 'strafe', 'struts', 'tank', 'armour', 'scatter', 'mass', 'seeker', 'sensors', 'cargo'];
+  // start the harbour on the far side from every moon of its world so the first launch has room
+  {
+    const moons = home.moons;
+    let bestPhase = harbour.orbit!.phase, bestSep = -1;
+    for (let i = 0; i < 24; i++) {
+      const ph = (i / 24) * TAU;
+      let sep = Math.PI;
+      for (const m of moons) {
+        const d = Math.abs(Math.atan2(Math.sin(m.orbit!.phase - ph), Math.cos(m.orbit!.phase - ph)));
+        if (d < sep) sep = d;
+      }
+      if (sep > bestSep) { bestSep = sep; bestPhase = ph; }
+    }
+    harbour.orbit!.phase = bestPhase;
+    const a = bestPhase, r = harbour.orbit!.radius;
+    harbour.pos.x = home.body.pos.x + Math.cos(a) * r; harbour.pos.y = home.body.pos.y + Math.sin(a) * r;
+  }
   const refineryHost = gas.moons.length ? gas.body : mid.body;
   const refinery = createStation(w, { name: names.station('refinery', refineryHost.name), kind: 'refinery', parent: refineryHost, orbitRadius: clearOrbit(refineryHost, refineryHost.radius * (refineryHost.kind === 'gas' ? 2.4 : 3.2)), period: 1000 + rng.int(300), phase: rng.next() * TAU, radius: 12, spin: 0.27 });
   refinery.upgrades = ['engine', 'tank', 'cargo', 'armour', 'retro', 'mass', 'heatshield', 'tractor', 'struts'];
