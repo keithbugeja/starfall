@@ -140,7 +140,7 @@ export function drawFlightHud(g: Game): void {
     const c1 = okB ? C.green : C.red, c2 = okW ? C.green : C.red, c3 = okF ? C.green : C.red;
     const side = angleDiff(p.angle, chk.bearing) > 0 ? '>' : '<';
     drawText(H, `BEARING ${(chk.bearingError * 57.3).toFixed(0)}° ${okB ? '' : side}`, cx - 118 * s, cy, 12 * s, c1[0], c1[1], c1[2], 0.95, 'center');
-    drawText(H, `WELL ${(chk.gravity * 100).toFixed(1)}`, cx, cy, 12 * s, c2[0], c2[1], c2[2], 0.95, 'center');
+    drawText(H, `WELL ${(chk.gravity * 100).toFixed(1)} / ${(DRIVE_GRAVITY_LIMIT * 100).toFixed(0)}`, cx, cy, 12 * s, c2[0], c2[1], c2[2], 0.95, 'center');
     drawText(H, `FUEL ${chk.fuelNeeded}`, cx + 118 * s, cy, 12 * s, c3[0], c3[1], c3[2], 0.95, 'center');
     if (p.drive.charging) drawText(H, `CHARGING ${Math.round(p.drive.charge * 100)}%  ·  LOUD`, cx, cy + 18 * s, 11 * s, 1, 0.8, 0.3, 0.6 + 0.4 * Math.sin(t * 12), 'center');
     else drawText(H, chk.ok ? 'HOLD G TO CHARGE' : chk.reason, cx, cy + 18 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.8, 'center');

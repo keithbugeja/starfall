@@ -108,6 +108,8 @@ const harness = {
   /** The jump drive from the test bench: fit it, aim it, hold it, read its gates. */
   drive(target: string | null): void { const p = game.world.player; if (!p.upgrades.includes('drive')) { p.upgrades.push('drive'); applyUpgrades(p); } p.drive.target = target; },
   charge(on: boolean): void { game.harnessCharge = on; },
+  saveRun(): void { game.saveRun(); },
+  loadRun(): boolean { return game.loadRun(); },
   prices(): unknown { return game.world.pricesSeen; },
   market(name: string): unknown { const st = game.world.stations.find(s => s.name === name); return st && st.market ? Object.fromEntries(Object.entries(st.market).map(([g, e]) => [g, { stock: e.stock, price: priceOf(e), bid: bidOf(e), buys: e.buys, sells: e.sells }])) : null; },
   driveCheck(): unknown { return checkDrive(game.world, game.sector, game.world.player); },

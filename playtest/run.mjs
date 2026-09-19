@@ -1128,6 +1128,107 @@ const sliceScenarios = {
     if (!found) console.log('no gun position in these seeds');
   },
 
+  async jump({ page }) {
+    // the sector slice, end to end: buy the drive, pick the star, climb out, charge, jump, coast in, dock, trade, jump home
+    await api.manual(page, true);
+    const seed = Number(process.env.PLANET_SEED ?? 2024);
+    await api.newGame(page, seed);
+    await api.launch(page);
+    let st = await api.state(page);
+    console.log(`home: ${st.system}, credits ${st.credits}`);
+    // the chart before a drive is fitted
+    await api.mode(page, 'map');
+    await api.press(page, 'KeyV');
+    await api.shot(page, 'jump_chart_nodrive', 10);
+    await api.press(page, 'KeyV');
+    await api.mode(page, 'flight');
+    // fit the drive and aim it
+    await page.evaluate(() => { window.__sf.game.world.credits += 2000; window.__sf.drive('ember'); });
+    await api.mode(page, 'map');
+    await api.press(page, 'KeyV');
+    await api.shot(page, 'jump_chart', 10);
+    await api.press(page, 'KeyV');
+    await api.mode(page, 'flight');
+    // climb out of the well from the harbour: full thrust along the bearing, measure how long the gate takes to open
+    let chk = await page.evaluate(() => window.__sf.driveCheck());
+    console.log(`at the harbour: ${chk.reason}, well ${chk.gravity.toFixed(4)}, bearing ${(chk.bearing * 57.3).toFixed(0)} deg, fuel needed ${chk.fuelNeeded}`);
+    // clear the harbour first (turning at the gap drives you straight back into the hub), then nose onto the bearing
+    await api.run(page, { thrust: 1 }, 5);
+    await page.evaluate(([a]) => { const p = window.__sf.game.world.player; p.angle = a; }, [chk.bearing]);
+    const t0 = (await api.state(page)).time;
+    let opened = -1;
+    for (let sec = 0; sec < 240; sec += 2) {
+      await api.run(page, { thrust: 1, boost: sec < 30 }, 2);
+      await page.evaluate(([a]) => { const p = window.__sf.game.world.player; p.angle = a; p.angVel = 0; }, [chk.bearing]);
+      chk = await page.evaluate(() => window.__sf.driveCheck());
+      if (chk.gravity <= 0.02 && opened < 0) { opened = (await api.state(page)).time - t0; break; }
+    }
+    st = await api.state(page);
+    console.log(`well gate opened after ${opened.toFixed(0)} s of climbing (boost for the first 30): ${chk.reason}, fuel ${st.player.fuel.toFixed(0)}`);
+    console.log('   where:', JSON.stringify(await page.evaluate(() => { const w = window.__sf.game.world, p = w.player; const home = w.stations[0].orbit ? w.stations[0].orbit.parent : null; const slip = w.bodies.find(b => b.name === 'THE SLIPWAY'); return { docked: p.docked ? p.docked.name : null, landed: p.landed ? p.landed.body.name : null, alive: p.alive, hull: p.hull, speed: Math.hypot(p.vel.x, p.vel.y), toHome: home ? Math.hypot(p.pos.x - home.pos.x, p.pos.y - home.pos.y) : null, toSlipway: slip ? Math.hypot(p.pos.x - slip.pos.x, p.pos.y - slip.pos.y) : null, toStar: Math.hypot(p.pos.x - w.star.pos.x, p.pos.y - w.star.pos.y), mode: window.__sf.game.mode, override: !!window.__sf.game.input.override }; })));
+    await api.run(page, {}, 0.5);
+    await api.shot(page, 'jump_ready', 10);
+    // charge, loud and hot, and watch who notices
+    const sigBefore = await page.evaluate(() => window.__sf.signature());
+    await page.evaluate(() => window.__sf.charge(true));
+    await api.run(page, {}, 4);
+    const sigDuring = await page.evaluate(() => window.__sf.signature());
+    const heatDuring = (await api.state(page)).player.heat;
+    await api.shot(page, 'jump_charging', 5);
+    await api.run(page, {}, 5);
+    await page.evaluate(() => window.__sf.charge(false));
+    st = await api.state(page);
+    console.log(`signature ${sigBefore.toFixed(2)} -> ${sigDuring.toFixed(2)} while charging, heat ${heatDuring.toFixed(2)}; now in ${st.system}, sector time ${st.sectorTime.toFixed(0)}`);
+    if (st.system !== 'ember') { console.log('DID NOT JUMP:', JSON.stringify(await page.evaluate(() => window.__sf.driveCheck()))); return; }
+    await api.shot(page, 'jump_arrival', 20);
+    const arrive = await page.evaluate(() => { const w = window.__sf.game.world, p = w.player; return { dist: Math.hypot(p.pos.x - w.star.pos.x, p.pos.y - w.star.pos.y), speed: Math.hypot(p.vel.x, p.vel.y), systemRadius: w.systemRadius, star: w.star.name, worlds: w.bodies.filter(b => b.kind === 'planet').map(b => b.name), port: w.stations[0].name, fuel: p.fuel }; });
+    console.log(`arrived at ${arrive.star}: ${arrive.dist.toFixed(0)} units out (system radius ${arrive.systemRadius.toFixed(0)}), ${arrive.speed.toFixed(0)} u/s inward, fuel ${arrive.fuel.toFixed(0)}; worlds ${arrive.worlds.join(', ')}; port ${arrive.port}`);
+    // the coast in: how long to the port at arrival speed, and with boost
+    console.log(`   coast to the port at ${arrive.speed.toFixed(0)} u/s: about ${(arrive.dist / arrive.speed / 60).toFixed(1)} min; boosting at 135: about ${(arrive.dist / 135 / 60).toFixed(1)} min`);
+    await api.mode(page, 'map');
+    await api.shot(page, 'jump_ember_map', 10);
+    await api.press(page, 'KeyV');
+    await api.shot(page, 'jump_chart_ember', 10);
+    await api.press(page, 'KeyV');
+    await api.mode(page, 'flight');
+    // to the port: teleport alongside and dock
+    const portPos = await page.evaluate(() => { const st = window.__sf.game.world.stations[0]; return { x: st.pos.x, y: st.pos.y, vx: st.vel.x, vy: st.vel.y, name: st.name }; });
+    await page.evaluate(([x, y, vx, vy]) => window.__sf.teleport(x + 60, y, vx, vy, Math.PI), [portPos.x, portPos.y, portPos.vx, portPos.vy]);
+    const dockRes = await autoDock(page, portPos.name, 90);
+    st = await api.state(page);
+    console.log(`docked at the port: ${st.mode === 'docked'} (${JSON.stringify(dockRes).slice(0, 120)})`);
+    if (st.mode === 'docked') {
+      const market = await page.evaluate(([n]) => window.__sf.market(n), [portPos.name]);
+      console.log('   port market:', JSON.stringify(market));
+      await api.shot(page, 'jump_port_dock', 10);
+      // buy ore here, and remember what home pays
+      const bought = await page.evaluate(([n]) => { const w = window.__sf.game.world, st = w.stations.find(s => s.name === n), p = w.player; const before = w.credits; let n0 = 0; for (let i = 0; i < 4; i++) { const e = st.market.ore; if (e.stock > 0) { w.credits -= Math.max(1, Math.round(e.base * Math.min(1.9, Math.max(0.55, 1.5 - e.stock / (2 * e.baseStock))))); e.stock--; p.cargo.ore++; n0++; } } return { n: n0, spent: before - w.credits, ore: p.cargo.ore }; }, [portPos.name]);
+      console.log(`   bought ${bought.n} ore for ${bought.spent} cr; cargo ore ${bought.ore}`);
+      console.log('   prices seen:', JSON.stringify(await page.evaluate(() => window.__sf.prices())));
+      await api.launch(page);
+    }
+    // home again: the ledger and the refinery
+    await page.evaluate(() => { window.__sf.drive('home'); const p = window.__sf.game.world.player; p.fuel = p.fuelMax; });
+    chk = await page.evaluate(() => window.__sf.driveCheck());
+    const park = await page.evaluate(([bearing]) => { const w = window.__sf.game.world, p = w.player; const sf = window.__sf; for (let r = w.systemRadius * 0.5; r < w.systemRadius * 0.95; r += 60) for (let k = 0; k < 24; k++) { const a = k / 24 * Math.PI * 2; const x = w.star.pos.x + Math.cos(a) * r, y = w.star.pos.y + Math.sin(a) * r; const g = sf.gravity(x, y); if (Math.hypot(g[0], g[1]) < 0.01 && w.bodies.every(b => Math.hypot(x - b.pos.x, y - b.pos.y) > b.soi + 50)) { sf.teleport(x, y, 0, 0, bearing); return true; } } return false; }, [chk.bearing]);
+    await page.evaluate(() => window.__sf.charge(true));
+    await api.run(page, {}, 9.5);
+    await page.evaluate(() => window.__sf.charge(false));
+    st = await api.state(page);
+    console.log(`parked ${park}; back in ${st.system}; sector time ${st.sectorTime.toFixed(0)}; ledgers: ${JSON.stringify((await page.evaluate(() => window.__sf.sector())).ledgers.ember).slice(0, 200)}`);
+    await api.shot(page, 'jump_home_again', 20);
+    const saved = await page.evaluate(() => { try { return localStorage.getItem('starfall.run') !== null; } catch { return false; } });
+    console.log('run saved on arrival:', saved);
+    // the saved run continues: a fresh game, then F2's path
+    const before = await page.evaluate(() => { const w = window.__sf.game.world; return { credits: w.credits, ore: w.player.cargo.ore, journal: w.journal.length, upgrades: w.player.upgrades.length }; });
+    await api.newGame(page, 99);
+    const loaded = await page.evaluate(() => window.__sf.loadRun());
+    st = await api.state(page);
+    const after = await page.evaluate(() => { const w = window.__sf.game.world; return { credits: w.credits, ore: w.player.cargo.ore, journal: w.journal.length, upgrades: w.player.upgrades.length, docked: w.player.docked ? w.player.docked.name : null }; });
+    console.log(`continued: ${loaded}; system ${st.system}; before ${JSON.stringify(before)} after ${JSON.stringify(after)}`);
+    await api.shot(page, 'jump_continued', 20);
+  },
+
   async cut({ page }) {
     await api.manual(page, true);
     for (const fit of ['stock', 'jets']) {

@@ -126,7 +126,8 @@ export function instantiate(sector: Sector, id: string): World {
   const r = recipeOf(sector, id);
   const w = r.kind === 'home' ? generateSystem(r.seed, sector.seedName) : generateFromRecipe(r);
   w.systemId = id;
-  if (r.kind === 'generated' && !r.name) r.name = w.star.name;
+  // a system is known by its star's name once it has been built; the home recipe's seed name is the run's, not the star's
+  if (!r.name || r.kind === 'home') r.name = w.star.name;
   const ledger = sector.ledgers[id] ?? (sector.ledgers[id] = emptyLedger());
   applyLedger(w, ledger, sector);
   return w;

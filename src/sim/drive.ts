@@ -13,7 +13,7 @@ export const DRIVE_GRAVITY_LIMIT = 0.02;   // units per second squared: outside 
 export const DRIVE_BEARING_TOLERANCE = 0.12; // radians of nose error the drive accepts
 export const DRIVE_CHARGE_SECONDS = 8;      // the short drive
 export const DRIVE_RANGE = 5;               // chart units the short drive reaches on a full tank at stock mass
-export const DRIVE_HEAT_PER_SECOND = 0.05;  // heat added while charging
+export const DRIVE_HEAT_PER_SECOND = 0.45;  // heat added while charging: well above what the ship sheds (0.35 a second), so a jump leaves the guns hot but short of a jam
 export const DRIVE_ARRIVAL_SPEED = 30;      // inward speed on arrival
 
 export interface DriveCheck {

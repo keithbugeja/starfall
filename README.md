@@ -44,14 +44,30 @@ a tutorial beyond the flight manual (H); the rest is there to be noticed.
 | R | ping: a sensor pulse; watch what comes back |
 | F (hold) | transfer fuel into what you are landed on or touching |
 | J | journal: what you have seen, in your own words |
+| V (in the map) | sector chart: pick a star to jump to |
+| G (hold) | charge the jump drive: clear of every well, nose on the bearing |
+| F2 (title) | continue the saved run; the run saves at every dock and every arrival |
 | Esc | pause (in the dock: nothing; L launches) |
 
 Gamepad: left stick turns, right trigger thrusts, A fires, B boosts, bumpers strafe, Start pauses,
 Back opens the map.
 
+## The sector
+
+The home system is one star in a sector. This build holds two: home, and a neighbour four chart
+units away that is a red dwarf that flares, with a scorched inner world and a mine on it, a rock
+world with a colony, an ice world, a free port, and no Tide. The harbour sells a jump drive. A jump
+is built from the rules you already fly by: climb clear of every well, put the nose on the bearing
+the chart gives, hold G for eight seconds while the drive charges (loud on every sensor, hot in
+your own guns), and the cable drops as you go. It costs fuel from the same tank, by distance and by
+the mass you carry. You arrive at the edge of the next system on the line from the star you left,
+falling in. What you did in a system stays done when you come back, and its orbits have moved on.
+Stations trade ore and salvage from a stock: prices follow the stock, and what a place paid the
+last time you looked is on the chart. The run saves itself at every dock and every arrival.
+
 ## The system
 
-The system is authored: five worlds in fixed roles, in a fixed order, with fixed places on them.
+The home system is authored: five worlds in fixed roles, in a fixed order, with fixed places on them.
 A seed changes names, terrain and timing, never what is where at system scale. The ground of the
 home and inner worlds is generated: their equators are cut as levels (valleys, ridges, craters,
 canyons, shelves, old excavations) and under them lie complexes of chambers and halls joined by broad
@@ -112,6 +128,8 @@ tow, recorders. Nothing in them is marked. Under the ground the world is drawn a
   traffic, patrol, conditions, lighthouse, planets (the cut worlds: screenshots and a flight through
   every chamber of the biggest complex; `PLANET_SEED` picks the seed, `CAVE_SPEED` the speed), tow (haul
   a rock out of a complex), gunpost (sit in a gun chamber), padcheck (every pad on the cut worlds
-  approached from above), voidprobe, launchcheck, landone. Screenshots land in `playtest/out/`.
+  approached from above), voidprobe, launchcheck, landone, jump (buy the drive, climb out, charge,
+  jump to the neighbour, dock and trade at its port, jump home, continue the saved run). Screenshots
+  land in `playtest/out/`.
 - `DESIGN.md` records the design decisions and the measured numbers behind them; `starfall.md` is
   the original brief.

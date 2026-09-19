@@ -327,6 +327,38 @@ a cache at the end. The interior grammar and its rendering were rebuilt; the ter
   The follower autopilot tows a small rock out of a complex on about half its tries and stalls on a
   size-two rock; a human test of towing is still needed. Only the home and inner worlds are cut.
 
+## The sector, slice one (two systems and a jump)
+EXPANSION.md's smallest slice, built to see whether the larger structure improves the game.
+- **Architecture.** A `Sector` (recipes, ledgers keyed by name, the sector clock, the player's state)
+  sits above the `World`; a world is built from a recipe and its ledger on entry and thrown away on
+  exit. The compromise against the design: `credits`, `score`, `lives`, `journal`, `discovered` and the
+  player ship stay on the `World` as the live copy and are transferred through `PlayerState` at each
+  jump, rather than moving up; nothing that reads them had to change. `generateSystem` is the home
+  recipe unchanged; the neighbour has its own generator and its own seed, so neither reshuffles the
+  other. Orbits and spins are advanced by the sector clock on entry. Director state is per world and
+  its opening beats and timers are ledgered. Every world starts at time zero.
+- **The jump** is four gates and a charge: gravity under 0.02 (outside every planet's sphere of
+  influence, clear of the star's near well), nose within seven degrees of the chart bearing, fuel for
+  five per chart unit times the mass multiplier, the cable in; eight seconds of charge that add a
+  signature of about 3 (a ping is 3) and heat faster than the ship sheds it. Arrival is at 97% of the
+  destination's system radius on the line from the origin star, 30 units a second inward.
+- **Measured (seed 2024).** From the harbour the well gate opens after 2 s of boost: the harbour sits
+  at 3.4 radii and the sphere of influence ends at 5, so the climb is short; from a pad it is the
+  whole climb. Signature 0.12 coasting, 3.4 charging. Fuel for the trip at stock mass with the drive:
+  22 of 100. Arrival at the neighbour 2200 units out: 1.2 minutes of coasting to the port, 20 s
+  boosting; arrival home is 6400 units out, 3.5 minutes coasting, 50 s boosting. The port sells ore
+  at 18 and pays 63 for salvage; the home refinery pays 38 for ore and sells salvage at 28; a hold of
+  eight ore clears about 150 credits a trip before fuel, sixteen with the rack about 300.
+- **What is ledgered and what is not.** Destroyed bases and cores (and their machinery), lost pads,
+  discovered names, threat, the director's opening and timers, station stocks (relaxing over ten
+  minutes away), the Pilgrim's state (a Pilgrim in flight when you leave is lost), whether the Cut's
+  regulator is gone, thruster tank fuel. Not ledgered: loose pickups and cores, wrecks, rocks moved,
+  live ships, projectiles, the Lighthouse's cooldown, the stillness. A pod on the cable does not jump.
+- **Goods.** The design's ore and parts are the game's ore and salvage; the names stayed.
+- **Tests.** Forty seeds of the neighbour sane and valid; the jump out and back with a base destroyed,
+  a note taken, a name learned, all true on return; the gates; markets; a saved run restored. The
+  browser scenario runs the whole loop and continues the saved run.
+
 ## Rendering
 WebGL2, no textures, no external art. Instanced flat-shaded meshes with four-band quantised
 lighting from the star plus a faint camera fill. Lines are screen-space expanded quads with a
