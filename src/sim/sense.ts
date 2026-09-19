@@ -85,6 +85,8 @@ export function signature(w: World, s: Ship): number {
   // the muzzle flash of a heavy gun carries further than a pulse
   if (w.time - s.lastFireTime < 1.5) sig += 0.6 + s.lastShotHeat * 8;
   if (w.time - s.lastPingTime < 2.5) sig += 3.0;
+  // a charging jump drive is the loudest thing a ship does
+  if (s.drive.charging) sig += 2.5 + s.drive.charge * 1.5;
   sig += s.heat * 0.4;
   // things that keep the tide's beat radiate it
   if (s.kind === 'sentinel' && s.landed && poweredAt(w, s.landed.body, s.pos.x, s.pos.y)) sig += 1.0;

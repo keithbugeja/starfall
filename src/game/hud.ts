@@ -7,6 +7,8 @@ import { dominantBody, gravityAt, LAND_ANG, LAND_VN, LAND_VT, surfaceInfo } from
 import { TETHER_BREAK } from '../sim/tether';
 import { hubRadius, localAngle } from '../sim/stations';
 import { hasSensors } from '../sim/upgrades';
+import { checkDrive, DRIVE_BEARING_TOLERANCE, DRIVE_GRAVITY_LIMIT, hasDrive } from '../sim/drive';
+import { recipeOf } from '../sector/sector';
 import type { GameEvent, Ship, Station, World } from '../sim/world';
 import { padWorldPos, terrainNormalAt, terrainRadiusAt } from '../sim/bodies';
 import { sunlight } from '../sim/sense';
@@ -126,6 +128,22 @@ export function drawFlightHud(g: Game): void {
     drawText(H, `${b.name}  G ${dom.g.toFixed(1)}`, rx, Hh - 66 * s, 11 * s, gc[0], gc[1], gc[2], 0.85, 'right');
     if (b.landable && alt < 50) { landingBody = b; landingAlt = alt; }
     if (b.kind === 'star' && alt < b.heatRadius - b.radius) drawText(H, 'STELLAR HEAT', rx, Hh - 46 * s, 11 * s, C.red[0], C.red[1], C.red[2], 0.6 + 0.4 * Math.sin(t * 10), 'right');
+  }
+  // ---------------- the drive: its gates as a readout, in the landing readout's manner
+  if (hasDrive(p) && p.drive.target && p.alive && !p.docked && g.sector) {
+    const chk = checkDrive(w, g.sector, p);
+    const to = recipeOf(g.sector, p.drive.target);
+    const cx = W / 2, cy = Hh - 250 * s;
+    const name = to.name || to.tag;
+    drawText(H, `DRIVE  ${name}  ${chk.distance.toFixed(1)} CHART UNITS`, cx, cy - 16 * s, 10 * s, C.amber[0], C.amber[1], C.amber[2], 0.85, 'center');
+    const okB = chk.bearingError <= DRIVE_BEARING_TOLERANCE, okW = chk.gravity <= DRIVE_GRAVITY_LIMIT, okF = p.fuel >= chk.fuelNeeded;
+    const c1 = okB ? C.green : C.red, c2 = okW ? C.green : C.red, c3 = okF ? C.green : C.red;
+    const side = angleDiff(p.angle, chk.bearing) > 0 ? '>' : '<';
+    drawText(H, `BEARING ${(chk.bearingError * 57.3).toFixed(0)}° ${okB ? '' : side}`, cx - 118 * s, cy, 12 * s, c1[0], c1[1], c1[2], 0.95, 'center');
+    drawText(H, `WELL ${(chk.gravity * 100).toFixed(1)}`, cx, cy, 12 * s, c2[0], c2[1], c2[2], 0.95, 'center');
+    drawText(H, `FUEL ${chk.fuelNeeded}`, cx + 118 * s, cy, 12 * s, c3[0], c3[1], c3[2], 0.95, 'center');
+    if (p.drive.charging) drawText(H, `CHARGING ${Math.round(p.drive.charge * 100)}%  ·  LOUD`, cx, cy + 18 * s, 11 * s, 1, 0.8, 0.3, 0.6 + 0.4 * Math.sin(t * 12), 'center');
+    else drawText(H, chk.ok ? 'HOLD G TO CHARGE' : chk.reason, cx, cy + 18 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.8, 'center');
   }
   // ---------------- landing guidance (walls inside fissures, rotating hulls included)
   const si = !p.landed && p.alive ? surfaceInfo(w, p.pos.x, p.pos.y) : null;

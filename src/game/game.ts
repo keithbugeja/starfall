@@ -14,7 +14,8 @@ import { poweredAt, socketWorld } from '../sim/power';
 import { structureNormal, structurePos } from '../sim/structures';
 import { signature, sunlight } from '../sim/sense';
 import { inShadow } from '../sim/physics';
-import { createSector, instantiate, type Sector } from '../sector/sector';
+import { createSector, instantiate, jumpTo, recipeOf, type Sector } from '../sector/sector';
+import { checkDrive, consumeJump, DRIVE_ARRIVAL_SPEED, updateDrive } from '../sim/drive';
 import { maxTerrainRadius, padWorldAngle, padWorldPos, terrainNormalAt, terrainRadiusAt, type Body } from '../sim/bodies';
 import { gravityAt, LAND_VN, predictTrajectory, type Trajectory } from '../sim/physics';
 import { stepWorld } from '../sim/step';
@@ -63,6 +64,7 @@ export class Game {
   private caveDip = 0;
   /** The run: every system, what happened in each, and the player between them. */
   sector!: Sector;
+  harnessCharge = false;
   /** Debug: draw the void mask in colour instead of depth only. */
   debugVoid = false;
   private starfield!: StaticPoints;
@@ -295,6 +297,27 @@ export class Game {
     sfx(w, 'ui');
   }
 
+  /** The jump: consume the charge, leave the ledger, arrive at the edge of the next system. */
+  performJump(): void {
+    const w = this.world, p = w.player;
+    const chk = checkDrive(w, this.sector, p);
+    if (!chk.ok || !p.drive.target) return;
+    consumeJump(w, p, chk);
+    sfx(w, 'flare', p.pos, 0.8);
+    const target = p.drive.target;
+    const nw = jumpTo(this.sector, w, target, DRIVE_ARRIVAL_SPEED);
+    this.loadWorld(nw);
+    this.caveDip = 1;
+    this.mode = 'flight';
+    const r = recipeOf(this.sector, target);
+    comm(nw, 'DRIVE', `ARRIVED: ${nw.star.name}. ${r.trait.toUpperCase()}. ${Math.round(Math.hypot(nw.player.pos.x - nw.star.pos.x, nw.player.pos.y - nw.star.pos.y))} UNITS OUT, FALLING IN.`, [0.8, 0.9, 1], 3);
+    nw.discovered.add(`system:${target}`);
+    this.onArrived();
+  }
+
+  /** Hook for what happens after a jump (saving the run, once there is a save). */
+  onArrived(): void { /* milestone five */ }
+
   /** Compose the player's controls including mouse steering. */
   playerControls(): Controls {
     const c = this.input.controls();
@@ -329,6 +352,9 @@ export class Game {
     this.fireSecondary = false;
     const docked = stepWorld(w, c, dt, { flight: this.mode === 'flight', fireSecondary: fire2, director: this.mode !== 'title', nearestEnemy: nearestEnemyShip(w, 400) });
     if (docked) { this.mode = 'docked'; this.menuIndex = 0; }
+    // the jump drive: held, it charges through its gates; complete, it takes the ship to another star
+    const engage = this.harnessCharge || (this.mode === 'flight' && !this.input.override && (this.input.down('KeyG') || this.input.gpButton(4) > 0.5));
+    if (p.alive && updateDrive(w, this.sector, p, engage, dt)) { this.performJump(); return; }
     if (p.docked && !p.docked.alive) {
       // the station died under us: thrown clear with a warning
       const st = p.docked;

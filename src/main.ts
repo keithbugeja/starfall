@@ -13,6 +13,7 @@ import { bodyToWorld } from './sim/walls';
 import { padWorldPos } from './sim/bodies';
 import { poweredAt, socketWorld } from './sim/power';
 import { structurePos } from './sim/structures';
+import { checkDrive } from './sim/drive';
 import { GEOGRAPHY, validatePlanet } from './gen/planet';
 import { canSense, losBlocker, signature, sunlight } from './sim/sense';
 import { createAsteroid, gravityAt, predictTrajectory, spawnPickup, type Trajectory } from './sim/physics';
@@ -103,6 +104,11 @@ const harness = {
   fireSecondaryNow(): void { game.input.overridePressed.add('KeyX'); },
   raw(): unknown { return game.world; },
   tether(): boolean { const p = game.world.player; if (p.tether) { release(game.world, p); return false; } return attach(game.world, p); },
+  /** The jump drive from the test bench: fit it, aim it, hold it, read its gates. */
+  drive(target: string | null): void { const p = game.world.player; if (!p.upgrades.includes('drive')) { p.upgrades.push('drive'); applyUpgrades(p); } p.drive.target = target; },
+  charge(on: boolean): void { game.harnessCharge = on; },
+  driveCheck(): unknown { return checkDrive(game.world, game.sector, game.world.player); },
+  sector(): unknown { const s = game.sector; return { time: s.time, current: s.current, systems: s.systems.map(r => ({ id: r.id, name: r.name, tag: r.tag, trait: r.trait, x: r.x, y: r.y })), ledgers: s.ledgers }; },
   ping(): void { const p = game.world.player; emitPing(game.world, p.pos.x, p.pos.y, false, undefined, p); },
   transfer(on: boolean): void { game.harnessTransfer = on; },
   spawnPilgrim(): void { game.world.slices.pilgrimSpawnAt = 0; },

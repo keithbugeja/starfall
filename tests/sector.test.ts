@@ -1,11 +1,15 @@
 // The sector: generated systems are sane, the jump carries the player and leaves a ledger, and a run survives being saved.
 import { describe, expect, it } from 'vitest';
-import { createSector, instantiate } from '../src/sector/sector';
+import { createSector, instantiate, jumpTo, serializeSector, deserializeSector, restoreSector } from '../src/sector/sector';
+import { checkDrive, consumeJump, updateDrive, DRIVE_ARRIVAL_SPEED, DRIVE_GRAVITY_LIMIT } from '../src/sim/drive';
+import { applyUpgrades } from '../src/sim/upgrades';
+import { note } from '../src/sim/journal';
+import { gravityAt } from '../src/sim/physics';
 import { GEOGRAPHY, validatePlanet } from '../src/gen/planet';
 import { maxTerrainRadius } from '../src/sim/bodies';
 import { emptyControls } from '../src/engine/input';
 import { stepWorld } from '../src/sim/step';
-import { SIM_DT } from '../src/sim/world';
+import { SIM_DT, type World } from '../src/sim/world';
 import { hashString } from '../src/engine/math';
 
 const SEEDS = Array.from({ length: 40 }, (_, i) => hashString('sector-' + i));
@@ -42,7 +46,6 @@ describe('generated systems', () => {
       expect(scorched.pads.some(p => p.kind === 'mine')).toBe(true);
       // the inner world lives inside the star's warm radius: guns run hot there in daylight
       expect(scorched.orbit!.radius).toBeLessThan(w.star.warmRadius);
-      // terrain in bounds, pads flat
       for (const b of w.bodies) for (let i = 0; i < b.segments; i++) expect(Number.isFinite(b.terrain[i])).toBe(true);
       // the world runs
       const c = emptyControls();
@@ -59,5 +62,134 @@ describe('generated systems', () => {
     expect(a.bodies.map(x => x.name)).toEqual(b.bodies.map(x => x.name));
     expect(a.pads.map(x => x.name)).toEqual(b.pads.map(x => x.name));
     expect(a.asteroids.length).toBe(b.asteroids.length);
+  });
+});
+
+/** A spot outside every well, with the nose on the bearing the drive wants. */
+function parkForJump(w: World, bearing: number): void {
+  const p = w.player;
+  const g = { x: 0, y: 0 };
+  for (let r = w.systemRadius * 0.5; r < w.systemRadius * 0.95; r += 60) {
+    for (let k = 0; k < 24; k++) {
+      const a = (k / 24) * Math.PI * 2;
+      const x = w.star.pos.x + Math.cos(a) * r, y = w.star.pos.y + Math.sin(a) * r;
+      if (gravityAt(w, x, y, g) < DRIVE_GRAVITY_LIMIT * 0.5 && w.bodies.every(b => Math.hypot(x - b.pos.x, y - b.pos.y) > b.soi + 50)) {
+        p.docked = null; p.landed = null; p.pos.x = x; p.pos.y = y; p.vel.x = 0; p.vel.y = 0; p.angle = bearing; return;
+      }
+    }
+  }
+  throw new Error('no clear spot');
+}
+
+describe('the jump', () => {
+  it('carries the player out and back, and the ledger remembers', () => {
+    const sector = createSector(hashString('jump-1'), 'JUMP');
+    const w = instantiate(sector, 'home');
+    const p = w.player;
+    p.upgrades.push('drive'); applyUpgrades(p);
+    p.fuel = p.fuelMax; w.credits = 512; p.cargo.ore = 3;
+    // consequences at home: a base destroyed, a note taken, a name learned
+    const base = w.pads.find(q => q.kind === 'enemybase' && !q.interior)!;
+    base.alive = false; base.enemyHealth = 0;
+    note(w, 'test-note', 'A NOTE TAKEN AT HOME.');
+    w.discovered.add('THE SLIPWAY');
+    const homePlanet = w.bodies.find(b => b.kind === 'planet')!;
+    const before = { x: homePlanet.pos.x, y: homePlanet.pos.y };
+    // the drive refuses in the well, then charges outside it
+    p.drive.target = 'ember';
+    p.docked = null;
+    expect(checkDrive(w, sector, p).ok).toBe(false);
+    const c = emptyControls();
+    parkForJump(w, checkDrive(w, sector, p).bearing);
+    let done = false;
+    for (let i = 0; i < 120 * 12 && !done; i++) { stepWorld(w, c, SIM_DT, { flight: true, fireSecondary: false, director: false, nearestEnemy: null }); done = updateDrive(w, sector, p, true, SIM_DT); }
+    expect(done).toBe(true);
+    const chk = checkDrive(w, sector, p);
+    expect(chk.ok).toBe(true);
+    const fuelBefore = p.fuel;
+    consumeJump(w, p, chk);
+    expect(p.fuel).toBeLessThan(fuelBefore);
+    const timeHome = w.time;
+    const nw = jumpTo(sector, w, 'ember', DRIVE_ARRIVAL_SPEED);
+    // arrived: the neighbour, at its edge, falling in, with everything that is ours
+    expect(nw.systemId).toBe('ember');
+    expect(sector.current).toBe('ember');
+    expect(sector.time).toBeCloseTo(timeHome, 3);
+    const np = nw.player;
+    const dist = Math.hypot(np.pos.x - nw.star.pos.x, np.pos.y - nw.star.pos.y);
+    expect(dist).toBeGreaterThan(nw.systemRadius * 0.9);
+    expect(np.vel.x * (nw.star.pos.x - np.pos.x) + np.vel.y * (nw.star.pos.y - np.pos.y)).toBeGreaterThan(0);
+    expect(nw.credits).toBe(512);
+    expect(np.cargo.ore).toBe(3);
+    expect(np.upgrades).toContain('drive');
+    expect(nw.journal.some(e => e.key === 'test-note')).toBe(true);
+    expect(nw.discovered.has('THE SLIPWAY')).toBe(false);
+    expect(np.drive.target).toBeNull();
+    expect(nw.stations.length).toBe(1);
+    // live a little there, then go home
+    for (let i = 0; i < 120 * 5; i++) stepWorld(nw, c, SIM_DT, { flight: true, fireSecondary: false, director: true, nearestEnemy: null });
+    np.drive.target = 'home';
+    parkForJump(nw, checkDrive(nw, sector, np).bearing);
+    np.fuel = np.fuelMax;
+    let back = false;
+    for (let i = 0; i < 120 * 12 && !back; i++) back = updateDrive(nw, sector, np, true, SIM_DT);
+    expect(back).toBe(true);
+    consumeJump(nw, np, checkDrive(nw, sector, np));
+    const hw = jumpTo(sector, nw, 'home', DRIVE_ARRIVAL_SPEED);
+    expect(hw.systemId).toBe('home');
+    // the ledger: the base is still dead, the note is still ours, the name is still known, time has passed
+    const base2 = hw.pads.find(q => q.name === base.name)!;
+    expect(base2.alive).toBe(false);
+    expect(hw.journal.some(e => e.key === 'test-note')).toBe(true);
+    expect(hw.discovered.has('THE SLIPWAY')).toBe(true);
+    expect(sector.ledgers.home.destroyedPads).toContain(base.name);
+    expect(sector.ledgers.ember.visited).toBe(true);
+    const homePlanet2 = hw.bodies.find(b => b.name === homePlanet.name)!;
+    expect(Math.hypot(homePlanet2.pos.x - before.x, homePlanet2.pos.y - before.y)).toBeGreaterThan(5);
+    expect(hw.ships.filter(s => s.kind === 'sentinel' && s.ai && s.ai.home === base2).length).toBe(0);
+    for (let i = 0; i < 120 * 5; i++) stepWorld(hw, c, SIM_DT, { flight: true, fireSecondary: false, director: true, nearestEnemy: null });
+    for (const s of hw.ships) expect(Number.isFinite(s.pos.x + s.vel.x)).toBe(true);
+  }, 120000);
+
+  it('refuses to charge off bearing and drops the charge when the ship boosts', () => {
+    const sector = createSector(hashString('jump-2'), 'JUMP');
+    const w = instantiate(sector, 'home');
+    const p = w.player;
+    p.upgrades.push('drive'); applyUpgrades(p); p.fuel = p.fuelMax;
+    p.drive.target = 'ember';
+    parkForJump(w, checkDrive(w, sector, p).bearing + 0.5);
+    expect(checkDrive(w, sector, p).reason).toBe('OFF BEARING');
+    expect(updateDrive(w, sector, p, true, SIM_DT)).toBe(false);
+    expect(p.drive.charging).toBe(false);
+    p.angle = checkDrive(w, sector, p).bearing;
+    updateDrive(w, sector, p, true, SIM_DT);
+    expect(p.drive.charging).toBe(true);
+    p.boosting = true;
+    updateDrive(w, sector, p, true, SIM_DT);
+    expect(p.drive.charging).toBe(false);
+    expect(p.drive.charge).toBe(0);
+  });
+});
+
+describe('persistence', () => {
+  it('a saved run comes back as the same run', () => {
+    const sector = createSector(hashString('save-1'), 'SAVE');
+    const w = instantiate(sector, 'home');
+    w.credits = 999; w.player.cargo.salvage = 2; w.player.upgrades.push('tank'); applyUpgrades(w.player);
+    note(w, 'saved-note', 'SAVED.');
+    const base = w.pads.find(q => q.kind === 'enemybase' && !q.interior)!; base.alive = false;
+    const text = serializeSector(sector, w, w.player.docked ? w.player.docked.name : null);
+    const back = deserializeSector(text);
+    expect(back).not.toBeNull();
+    const rw = restoreSector(back!);
+    expect(rw.systemId).toBe('home');
+    expect(rw.credits).toBe(999);
+    expect(rw.player.cargo.salvage).toBe(2);
+    expect(rw.player.upgrades).toContain('tank');
+    expect(rw.player.fuelMax).toBe(170);
+    expect(rw.journal.some(e => e.key === 'saved-note')).toBe(true);
+    expect(rw.pads.find(q => q.name === base.name)!.alive).toBe(false);
+    expect(rw.player.docked && rw.player.docked.name).toBe(w.stations[0].name);
+    expect(deserializeSector('nonsense')).toBeNull();
   });
 });
