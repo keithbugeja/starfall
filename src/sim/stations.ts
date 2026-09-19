@@ -200,7 +200,7 @@ export function dock(w: World, s: Ship, st: Station): void {
       const pod = s.towing;
       release(w, s);
       podDelivered(w, pod, null);
-      comm(w, st.name, 'POD RECEIVED. THE COLONISTS ARE SAFE. +150 CR', [0.6, 1, 0.8], 1);
+      comm(w, st.name, 'POD RECEIVED. THE COLONISTS ARE SAFE. +200 CR', [0.6, 1, 0.8], 1);
     } else if (s.tether) release(w, s);
   }
 }

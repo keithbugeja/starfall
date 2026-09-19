@@ -3,7 +3,7 @@
 import { chromium } from 'playwright';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.join(here, 'out');
@@ -51,8 +51,28 @@ export const api = {
 };
 
 
+/** Keep clear of hulls, stations, wreck hulks and rocks: a repulsive velocity that grows as the keep-out radius nears, looking a little ahead. Prepended to the controller sources. */
+const AVOID_SRC = `
+  const avoid = (w, p, vx, vy, skipStation) => {
+    const look = 2.0;
+    const push = (ox, oy, ovx, ovy, keep, margin, strength) => {
+      const fx = (ox + ovx * look) - (p.pos.x + p.vel.x * look), fy = (oy + ovy * look) - (p.pos.y + p.vel.y * look);
+      const d = Math.min(Math.hypot(ox - p.pos.x, oy - p.pos.y), Math.hypot(fx, fy));
+      if (d > keep + margin) return;
+      const nx = p.pos.x - ox, ny = p.pos.y - oy, nl = Math.hypot(nx, ny) || 1;
+      const k = Math.min(1, (keep + margin - d) / margin);
+      vx += nx / nl * strength * k; vy += ny / nl * strength * k;
+    };
+    for (const b of w.bodies) if (b.kind === 'hull') push(b.pos.x, b.pos.y, b.vel.x, b.vel.y, b.radius + 30, 70, 22);
+    for (const s of w.stations) if (s.alive && s !== skipStation) push(s.pos.x, s.pos.y, s.vel.x, s.vel.y, s.radius * 2.2, 40, 14);
+    for (const k of w.pickups) if (k.alive && k.kind === 'wreck') push(k.pos.x, k.pos.y, k.vel.x, k.vel.y, 5, 8, 7);
+    for (const a of w.asteroids) if (a.alive) push(a.pos.x, a.pos.y, a.vel.x, a.vel.y, a.radius + 6, 30, 20);
+    return [vx, vy];
+  };
+`;
+
 /** Landing autopilot: runs inside the page. Returns a log. */
-const LANDER_SRC = `
+const LANDER_SRC = AVOID_SRC + `
   const w = sf.game.world, p = w.player;
   const b = w.bodies.find(b => b.name === bodyName);
   const pad = b.pads.find(q => q.name === padName);
@@ -95,6 +115,7 @@ const LANDER_SRC = `
     const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
     const ex = (wantVr - vr), et = (wantVt - vt);
     let ax = (ux * ex + tx * et) * 1.6 - gx, ay = (uy * ex + ty * et) * 1.6 - gy;
+    { const av = avoid(w, p, 0, 0, null); ax += av[0] * 1.6; ay += av[1] * 1.6; }
     const am = Math.hypot(ax, ay);
     const wantHeading = am > 0.3 ? Math.atan2(ay, ax) : Math.atan2(uy, ux);
     const hErr = wrap(wantHeading - p.angle);
@@ -226,7 +247,7 @@ const scenarios = {
 
 
 /** In-page docking autopilot: approach the station, wait for the gap, run in. */
-const DOCK_SRC = `
+const DOCK_SRC = AVOID_SRC + `
   const w = sf.game.world, p = w.player;
   const st = w.stations.find(s => s.name === name);
   const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
@@ -245,6 +266,7 @@ const DOCK_SRC = `
       const hx = st.pos.x - dx / d * R * 1.8, hy = st.pos.y - dy / d * R * 1.8;
       wantVx = st.vel.x + (hx - p.pos.x) * 0.5; wantVy = st.vel.y + (hy - p.pos.y) * 0.5;
       const sp = Math.hypot(wantVx, wantVy); if (sp > 30) { wantVx *= 30 / sp; wantVy *= 30 / sp; }
+      { const av = avoid(w, p, wantVx, wantVy, st); wantVx = av[0]; wantVy = av[1]; }
       const holdErr = Math.hypot(hx - p.pos.x, hy - p.pos.y);
       // the gap must be coming toward our bearing: station spins at st.spin, so lead it
       const lead = local - st.spin * 2.0;
@@ -280,7 +302,7 @@ const FIGHT_SRC = `
   const log = [];
   let kills0 = w.kills;
   for (let t = 0; t < ticks; t++) {
-    if (!p.alive) break;
+    if (!p.alive || p.hull < minHull) break;
     let best = null, bd = 1e9;
     for (const s of w.ships) { if (!s.alive || s.faction !== 'enemy' || s.kind === 'sentinel') continue; const d = Math.hypot(s.pos.x - p.pos.x, s.pos.y - p.pos.y); if (d < bd) { bd = d; best = s; } }
     const c = { turn: 0, thrust: 0, retro: 0, strafe: 0, fire: false, boost: false };
@@ -303,11 +325,11 @@ const FIGHT_SRC = `
   return { log, hull: p.hull, alive: p.alive, kills: w.kills - kills0 };
 `;
 
-async function autoFight(page, seconds) {
-  return page.evaluate(([src, ticks]) => {
-    const f = new Function('sf', 'ticks', src);
-    return f(window.__sf, ticks);
-  }, [FIGHT_SRC, Math.round(seconds * 120)]);
+async function autoFight(page, seconds, minHull = 0) {
+  return page.evaluate(([src, ticks, minHull]) => {
+    const f = new Function('sf', 'ticks', 'minHull', src);
+    return f(window.__sf, ticks, minHull);
+  }, [FIGHT_SRC, Math.round(seconds * 120), minHull]);
 }
 
 const moreScenarios = {
@@ -683,7 +705,7 @@ Object.assign(scenarios, moreScenarios);
 
 
 /** In-page waypoint follower for tight spaces: gravity-compensated velocity control at low speed. */
-const FOLLOW_SRC = `
+const FOLLOW_SRC = AVOID_SRC + `
   const w = sf.game.world, p = w.player;
   const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
   const body = bodyName ? w.bodies.find(b => b.name === bodyName) : null;
@@ -698,9 +720,12 @@ const FOLLOW_SRC = `
     const d = Math.hypot(dx, dy) || 1e-6;
     if (d < tol) { idx++; stuck = 0; continue; }
     const [gx, gy] = grav();
-    const sp = Math.min(maxSpeed, Math.max(1.2, d * 0.5));
+    let cap = maxSpeed;
+    for (const b of w.bodies) { if (b.kind === 'star' || b.kind === 'hull') continue; const alt = Math.hypot(p.pos.x - b.pos.x, p.pos.y - b.pos.y) - b.radius; if (alt < b.radius * 1.5) cap = Math.min(cap, 14); }
+    const sp = Math.min(cap, Math.max(1.2, d * 0.5));
     // reference frame: the body the waypoints belong to (its velocity)
-    const wantVx = refVel.x + dx / d * sp, wantVy = refVel.y + dy / d * sp;
+    let wantVx = refVel.x + dx / d * sp, wantVy = refVel.y + dy / d * sp;
+    if (avoidOn) { const av = avoid(w, p, wantVx, wantVy, null); wantVx = av[0]; wantVy = av[1]; }
     const ax = (wantVx - p.vel.x) * gain - gx, ay = (wantVy - p.vel.y) * gain - gy;
     const am = Math.hypot(ax, ay);
     const c = { turn: 0, thrust: 0, retro: 0, strafe: 0, fire: false, boost: false };
@@ -729,12 +754,83 @@ const FOLLOW_SRC = `
   return { log, hits, reached: idx, of: pts.length, alive: p.alive, hull: p.hull, fuel: p.fuel, ticks: t, tethered: !!p.tether, peak: p.tether ? p.tether.peak : null };
 `;
 
+/** Chase loose pickups: fly to the nearest free-floating piece with velocity matched to it, collect on contact, repeat. Runs inside the page. */
+const CHASE_SRC = AVOID_SRC + `
+  const w = sf.game.world, p = w.player;
+  const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+  const loose = k => k.alive && !k.carriedBy && !k.socketBody && (k.kind === 'salvage' || k.kind === 'ore' || k.kind === 'fuel') && w.bodies.every(b => b.kind === 'star' || Math.hypot(k.pos.x - b.pos.x, k.pos.y - b.pos.y) > (b.kind === 'hull' ? b.radius + 80 : b.radius * 1.5 + 40));
+  let t = 0, stuck = 0, last = null;
+  const hits = [];
+  const before = p.cargo.ore + p.cargo.salvage, fuelBefore = p.fuel;
+  while (t < ticks && p.alive && !w.flare.active && !w.flare.warned) {
+    let best = null, bd = radius;
+    for (const k of w.pickups) { if (!loose(k)) continue; const d = Math.hypot(k.pos.x - p.pos.x, k.pos.y - p.pos.y); if (d < bd) { bd = d; best = k; } }
+    if (!best) break;
+    if (p.cargo.ore + p.cargo.salvage >= p.cargo.capacity && best.kind !== 'fuel') break;
+    if (best !== last) { last = best; stuck = 0; }
+    const dx = best.pos.x - p.pos.x, dy = best.pos.y - p.pos.y, d = Math.hypot(dx, dy) || 1e-6;
+    const sp = Math.min(maxSpeed, Math.max(2, d * 0.5));
+    let wantVx = best.vel.x + dx / d * sp, wantVy = best.vel.y + dy / d * sp;
+    { const av = avoid(w, p, wantVx, wantVy, null); wantVx = av[0]; wantVy = av[1]; }
+    const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+    const ax = (wantVx - p.vel.x) * 2.6 - gx, ay = (wantVy - p.vel.y) * 2.6 - gy;
+    const am = Math.hypot(ax, ay);
+    const c = { turn: 0, thrust: 0, retro: 0, strafe: 0, fire: false, boost: false };
+    if (am > 0.3) { const err = wrap(Math.atan2(ay, ax) - p.angle); c.turn = Math.max(-1, Math.min(1, err * 4)); const fwd = ax * Math.cos(p.angle) + ay * Math.sin(p.angle); if (Math.abs(err) < 0.5 && fwd > 0) c.thrust = Math.min(1, fwd / p.stats.thrust); }
+    sf.controls(c);
+    const h0 = p.hull;
+    sf.step(1);
+    if (p.hull < h0 - 0.01) hits.push({ t: (t / 120).toFixed(1), dmg: (h0 - p.hull).toFixed(1), src: p.lastDamageSource, near: sf.surroundings() });
+    t++;
+    if (++stuck > 120 * 30) break;
+  }
+  sf.controls(null);
+  return { got: p.cargo.ore + p.cargo.salvage - before, fuel: p.fuel - fuelBefore, ticks: t, alive: p.alive, hull: p.hull, hits };
+`;
+async function chase(page, radius, maxSpeed, seconds) {
+  return page.evaluate(([src, radius, maxSpeed, ticks]) => { const f = new Function('sf', 'radius', 'maxSpeed', 'ticks', src); return f(window.__sf, radius, maxSpeed, ticks); }, [CHASE_SRC, radius, maxSpeed, Math.round(seconds * 120)]);
+}
+
+/** Climb off a world: a gentle lift on the struts, then a radial ascent at a modest speed to a target altitude, keeping clear of hulls. Runs inside the page. */
+const CLIMB_SRC = AVOID_SRC + `
+  const w = sf.game.world, p = w.player;
+  const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+  let b = p.landed ? p.landed.body : null;
+  if (!b) { let bd = 1e9; for (const q of w.bodies) { if (q.kind === 'star' || q.kind === 'hull') continue; const d = Math.hypot(p.pos.x - q.pos.x, p.pos.y - q.pos.y) - q.radius; if (d < bd) { bd = d; b = q; } } }
+  let t = 0;
+  for (; t < 30 && p.landed; t++) { sf.controls({ turn: 0, thrust: 0.6, retro: 0, strafe: 0, fire: false, boost: false }); sf.step(1); }
+  while (t < ticks && p.alive) {
+    const dx = p.pos.x - b.pos.x, dy = p.pos.y - b.pos.y, r = Math.hypot(dx, dy) || 1;
+    const alt = r - b.radius;
+    if (alt > targetAlt) break;
+    const ux = dx / r, uy = dy / r;
+    const sp = Math.min(maxSpeed, Math.max(4, alt * 0.35));
+    let wantVx = b.vel.x + ux * sp, wantVy = b.vel.y + uy * sp;
+    { const av = avoid(w, p, wantVx, wantVy, null); wantVx = av[0]; wantVy = av[1]; }
+    const [gx, gy] = sf.gravity(p.pos.x, p.pos.y);
+    const ax = (wantVx - p.vel.x) * 2.4 - gx, ay = (wantVy - p.vel.y) * 2.4 - gy;
+    const c = { turn: 0, thrust: 0, retro: 0, strafe: 0, fire: false, boost: false };
+    const err = wrap(Math.atan2(ay, ax) - p.angle);
+    c.turn = Math.max(-1, Math.min(1, err * 4));
+    const fwd = ax * Math.cos(p.angle) + ay * Math.sin(p.angle);
+    if (Math.abs(err) < 0.5 && fwd > 0) c.thrust = Math.min(1, fwd / p.stats.thrust);
+    sf.controls(c);
+    sf.step(1);
+    t++;
+  }
+  sf.controls(null);
+  return { alive: p.alive, hull: p.hull, ticks: t, landed: !!p.landed };
+`;
+async function climb(page, targetAlt, maxSpeed, seconds) {
+  return page.evaluate(([src, targetAlt, maxSpeed, ticks]) => { const f = new Function('sf', 'targetAlt', 'maxSpeed', 'ticks', src); return f(window.__sf, targetAlt, maxSpeed, ticks); }, [CLIMB_SRC, targetAlt, maxSpeed, Math.round(seconds * 120)]);
+}
+
 async function follow(page, pts, opts = {}) {
-  const { seconds = 120, tol = 2.2, maxSpeed = 4.5, gain = 2.2, refVel = { x: 0, y: 0 }, body = null } = opts;
-  return page.evaluate(([src, pts, ticks, tol, maxSpeed, gain, refVel0, bodyName]) => {
-    const f = new Function('sf', 'pts', 'ticks', 'tol', 'maxSpeed', 'gain', 'refVel0', 'bodyName', src);
-    return f(window.__sf, pts, ticks, tol, maxSpeed, gain, refVel0, bodyName);
-  }, [FOLLOW_SRC, pts, Math.round(seconds * 120), tol, maxSpeed, gain, refVel, body]);
+  const { seconds = 120, tol = 2.2, maxSpeed = 4.5, gain = 2.2, refVel = { x: 0, y: 0 }, body = null, avoid = false } = opts;
+  return page.evaluate(([src, pts, ticks, tol, maxSpeed, gain, refVel0, bodyName, avoidOn]) => {
+    const f = new Function('sf', 'pts', 'ticks', 'tol', 'maxSpeed', 'gain', 'refVel0', 'bodyName', 'avoidOn', src);
+    return f(window.__sf, pts, ticks, tol, maxSpeed, gain, refVel0, bodyName, avoidOn);
+  }, [FOLLOW_SRC, pts, Math.round(seconds * 120), tol, maxSpeed, gain, refVel, body, avoid]);
 }
 
 /** Hold a heading and thrust for a while (for pull tests). */
@@ -1227,6 +1323,222 @@ const sliceScenarios = {
     const after = await page.evaluate(() => { const w = window.__sf.game.world; return { credits: w.credits, ore: w.player.cargo.ore, journal: w.journal.length, upgrades: w.player.upgrades.length, docked: w.player.docked ? w.player.docked.name : null }; });
     console.log(`continued: ${loaded}; system ${st.system}; before ${JSON.stringify(before)} after ${JSON.stringify(after)}`);
     await api.shot(page, 'jump_continued', 20);
+  },
+
+  async earn({ page }) {
+    // a pilot who knows the game, from a fresh start: how long to the first jump drive, and where the credits came from
+    await api.manual(page, true);
+    const seed = Number(process.env.PLANET_SEED ?? 2024);
+    const limitMin = Number(process.env.EARN_MINUTES ?? 30);
+    const fights = process.env.EARN_FIGHT === '1';
+    await api.newGame(page, seed);
+    const price = await page.evaluate(() => window.__sf.drivePrice());
+    await page.evaluate(() => window.__sf.setLives(9)); // test instrumentation: game over would truncate the measurement
+    const income = {};
+    let lastCredits = 0;
+    const near = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const seenComms = new Set();
+    const mark = async (note, source) => {
+      const st = await api.state(page);
+      for (const c of st.comms) { if (!seenComms.has(c)) { seenComms.add(c); if (/\+\d+ CR/.test(c)) console.log(`   comm: ${c}`); } }
+      const d = Math.round(st.credits - lastCredits);
+      if (source && d !== 0) income[source] = (income[source] ?? 0) + d;
+      lastCredits = st.credits;
+      console.log(`t=${String(Math.round(st.time)).padStart(4)}s  cr ${String(Math.round(st.credits)).padStart(5)} (${d >= 0 ? '+' : ''}${d})  hull ${st.player.hull.toFixed(0)} fuel ${st.player.fuel.toFixed(0)} cargo ${st.player.cargo.ore}/${st.player.cargo.salvage}  :: ${note}`);
+      return st;
+    };
+    const harbourName = (await api.state(page)).stations.find(s => s.kind === 'harbour').name;
+    let kills = 0;
+    const harbour = s => s.stations.find(q => q.name === harbourName);
+    // obstacles: worlds, hulls and stations, each with a keep-out radius
+    const obstacles = s => [
+      ...s.bodies.filter(b => b.kind !== 'star').map(b => ({ x: b.x, y: b.y, R: b.kind === 'hull' ? b.r + 60 : b.r * 1.4 + 50 })),
+      ...s.stations.map(q => ({ x: q.x, y: q.y, R: q.r * 3 + 25 })),
+    ];
+    // a leg: step out of anything we are inside, detour round the first thing the line crosses, then the target
+    const plan = (s, from, to, keepOut = null) => {
+      const obs = obstacles(s).filter(o => !keepOut || near(o, keepOut) > 1);
+      const pts = [];
+      let cur = { x: from.x, y: from.y };
+      for (const o of obs) { const d = near(o, cur); if (d < o.R && d > 1e-6) { cur = { x: o.x + (cur.x - o.x) / d * (o.R + 5), y: o.y + (cur.y - o.y) / d * (o.R + 5) }; pts.push(cur); } }
+      let best = null;
+      for (const o of obs) {
+        const vx = to.x - cur.x, vy = to.y - cur.y, l2 = vx * vx + vy * vy || 1e-9;
+        const t = Math.max(0, Math.min(1, ((o.x - cur.x) * vx + (o.y - cur.y) * vy) / l2));
+        const px = cur.x + vx * t, py = cur.y + vy * t;
+        if (Math.hypot(px - o.x, py - o.y) < o.R && t > 0.02 && t < 0.98 && (!best || t < best.t)) best = { o, t, px, py };
+      }
+      if (best) { let nx = best.px - best.o.x, ny = best.py - best.o.y, nl = Math.hypot(nx, ny); if (nl < 1) { nx = -(to.y - cur.y); ny = to.x - cur.x; nl = Math.hypot(nx, ny) || 1; } pts.push({ x: best.o.x + nx / nl * best.o.R, y: best.o.y + ny / nl * best.o.R }); }
+      pts.push({ x: to.x, y: to.y });
+      return pts;
+    };
+    // cruise toward a moving target, replanning every couple of seconds
+    const cruise = async (getTarget, tol, speed, seconds, keepOut = null) => {
+      const t0 = (await api.state(page)).time;
+      for (;;) {
+        const s = await stateWithLoot();
+        if (!s.player.alive || s.time - t0 > seconds || s.flare.active || s.flare.warned) return false;
+        const tg = getTarget(s);
+        if (!tg) return false;
+        if (near(tg, s.player) < tol) return true;
+        const pts = plan(s, s.player, tg, keepOut ? keepOut(s) : null);
+        const res = await follow(page, pts, { seconds: 2, tol, maxSpeed: speed, gain: 2.2, refVel: { x: tg.vx ?? 0, y: tg.vy ?? 0 }, avoid: true });
+        if (res.hits.some(h => h.src === 'weapon') && res.hull >= 50) {
+          const e = await wasps(s);
+          if (e.onlyWasps) { const k0 = s.kills; const f = await autoFight(page, 40, 40); const q2 = await api.state(page); kills += q2.kills - k0; if (q2.kills - k0) await mark(`shot down ${q2.kills - k0} wasp${q2.kills - k0 > 1 ? 's' : ''} that harried us`, 'bounties and rewards'); continue; }
+        }
+        if (res.hits.length) console.log(`   hit on a cruise leg: ${res.hits.map(h => `-${h.dmg.toFixed(1)} ${h.src} wp${h.wp}`).join(' ')} from (${s.player.x.toFixed(0)},${s.player.y.toFixed(0)}) v(${s.player.vx.toFixed(0)},${s.player.vy.toFixed(0)}) via ${pts.map(q => `(${q.x.toFixed(0)},${q.y.toFixed(0)})`).join(' ')} :: ${JSON.stringify(await page.evaluate(() => window.__sf.surroundings()))}`);
+      }
+    };
+    // out of the bay and away from the world, not into the rubble ring below the harbour
+    const leaveHarbour = async () => {
+      await api.launch(page);
+      await api.run(page, { thrust: 0.8 }, 1.2);
+      await cruise(q => { const h = harbour(q); const star = q.bodies.find(b => b.kind === 'star'); let home = null, bd = 1e9; for (const b of q.bodies) { if (b.kind === 'star' || b.kind === 'hull') continue; const d = near(b, h); if (d < bd) { bd = d; home = b; } } const d = near(home, h) || 1; return { x: h.x + (h.x - home.x) / d * 80, y: h.y + (h.y - home.y) / d * 80, vx: h.vx, vy: h.vy }; }, 20, 18, 40, q => harbour(q));
+    };
+    const wasps = async (q) => { const kinds = await page.evaluate(([x, y]) => window.__sf.enemyKindsNear(x, y, 260), [q.player.x, q.player.y]); return { any: kinds.length > 0, onlyWasps: kinds.length > 0 && kinds.every(k => k === 'wasp') }; };
+    const dockAtHarbour = async () => {
+      let s = await api.state(page);
+      if (s.mode === 'docked') return true;
+      if (s.player.landed) await climb(page, 70, 20, 60);
+      // a standoff point five radii out on our side, at a modest speed, then the docking run
+      await cruise(q => { const h = harbour(q); const d = near(h, q.player) || 1; return { x: h.x + (q.player.x - h.x) / d * h.r * 5, y: h.y + (q.player.y - h.y) / d * h.r * 5, vx: h.vx, vy: h.vy }; }, 14, 32, 240, q => harbour(q));
+      await autoDock(page, harbourName, 150);
+      s = await api.state(page);
+      return s.mode === 'docked';
+    };
+    const service = async () => {
+      const sold = await page.evaluate(() => ({ ore: window.__sf.sell('ore'), salvage: window.__sf.sell('salvage') }));
+      if (sold.ore) await mark(`sold ore for ${sold.ore}`, 'ore sold');
+      if (sold.salvage) await mark(`sold salvage for ${sold.salvage}`, 'salvage sold');
+      const s1 = await api.state(page);
+      if (s1.player.fuel < 75) { const c = await page.evaluate(() => window.__sf.buyFuel()); if (c) await mark(`refuelled for ${c}`, 'fuel'); }
+      if (s1.player.hull < 100) { const c = await page.evaluate(() => window.__sf.buyRepair()); if (c) await mark(`repaired for ${c}`, 'repairs'); }
+    };
+    const lootNear = async (s, r) => page.evaluate(([x, y, r]) => window.__sf.loot(x, y, r), [s.player.x, s.player.y, r]);
+    const stateWithLoot = async () => { const q = await api.state(page); q.loot = await lootNear(q, 1600); return q; };
+    let st = await mark('fresh game, docked at the harbour', null);
+    let bought = false, deaths = 0, phases = 0;
+    const emptyMarkers = new Set();
+    const postMortem = async () => JSON.stringify(await page.evaluate(() => window.__sf.surroundings()));
+    await leaveHarbour();
+    while (!bought && phases++ < 80) {
+      st = await api.state(page);
+      if (st.time / 60 > limitMin || st.gameOver) break;
+      if (!st.player.alive) { deaths++; await mark(`KESTREL LOST (${st.player.lastDamageSource}) ${await postMortem()}`, null); await api.run(page, {}, 6); continue; }
+      if (st.mode === 'docked') {
+        await service();
+        st = await api.state(page);
+        if (st.credits >= price && st.player.docked === harbourName) { bought = await page.evaluate(() => window.__sf.buy('drive')); await mark('BOUGHT THE JUMP DRIVE', 'drive'); break; }
+        await leaveHarbour();
+        st = await api.state(page);
+      }
+      const tStart = st.time, creditsStart = st.credits;
+      const room = st.player.cargo.capacity - st.player.cargo.ore - st.player.cargo.salvage;
+      const active = st.events.filter(e => !e.resolved && !e.failed);
+      const pieces = await lootNear(st, 1600);
+      const fight = fights && st.player.hull >= 75 ? active.find(e => (e.kind === 'raid' || e.kind === 'convoy' || e.kind === 'hunt') && near(e, st.player) < 3000) : null;
+      const stranded = active.find(e => e.kind === 'stranded' && e.target && e.target.alive && near(e.target, st.player) < 3000);
+      const salvageEvent = active.find(e => e.kind === 'salvage' && near(e, st.player) < 2500 && !emptyMarkers.has(e.id));
+      const threatened = await page.evaluate(([x, y]) => window.__sf.enemiesNear(x, y, 220), [st.player.x, st.player.y]);
+      if (phases === 1 && !salvageEvent) {
+        // the opening beat: CONTROL calls a debris field within half a minute of launch
+        for (let k = 0; k < 8; k++) { const q = await api.state(page); if (q.events.some(e => e.kind === 'salvage' && !e.resolved)) break; await api.run(page, {}, 4); }
+        continue;
+      }
+      if (st.flare.active || st.flare.warned) {
+        // a flare: into the shadow of the nearest world and wait it out
+        const shelter = q => { const star = q.bodies.find(b => b.kind === 'star'); let best = null, bd = 1e9; for (const b of q.bodies) { if (b.kind === 'star' || b.kind === 'hull') continue; const d = near(b, q.player); if (d < bd) { bd = d; best = b; } } const dx = best.x - star.x, dy = best.y - star.y, l = Math.hypot(dx, dy) || 1; const R = best.r * 1.6 + 20; return { x: best.x + dx / l * R, y: best.y + dy / l * R, vx: best.vx, vy: best.vy }; };
+        await mark('flare called: running for shadow', null);
+        const t0 = st.time;
+        for (let k = 0; k < 60; k++) {
+          const q = await stateWithLoot();
+          if (!q.player.alive || (!q.flare.active && !q.flare.warned) || q.time - t0 > 200) break;
+          const tg = shelter(q);
+          if (near(tg, q.player) < 14) { await api.run(page, {}, 3); continue; }
+          const fr = await follow(page, plan(q, q.player, tg), { seconds: 3, tol: 12, maxSpeed: 40, gain: 2.4, refVel: { x: tg.vx, y: tg.vy }, avoid: true });
+          if (k < 3 || fr.ticks < 300) console.log(`   shelter leg ${k}: flare ${JSON.stringify(q.flare)} mode ${q.mode} landed ${!!q.player.landed} docked ${q.player.docked} ticks ${fr.ticks} reached ${fr.reached}/${fr.of} alive ${fr.alive} d ${near(tg, q.player).toFixed(0)}`);
+        }
+        await mark('flare over', null);
+        continue;
+      }
+      if (threatened && !fight) {
+        const e = await wasps(st);
+        if (e.onlyWasps && st.player.hull >= 50) {
+          const k0 = st.kills;
+          await autoFight(page, 45, 40);
+          const q2 = await api.state(page);
+          kills += q2.kills - k0;
+          await mark(`wasps at the door: ${q2.kills - k0} shot down`, 'bounties and rewards');
+          continue;
+        }
+        // outgunned or hurt: back to the harbour's guns
+        await mark(`enemies close (${threatened}): running for the harbour`, null);
+        const ok = await dockAtHarbour();
+        if (!ok) await mark(`could not dock ${await postMortem()}`, null);
+        continue;
+      }
+      if (pieces.length && room > 0) {
+        // fly to the nearest loose piece, then sweep the field
+        let got = 0, fuel = 0;
+        for (let k = 0; k < 4; k++) {
+          const s = await api.state(page);
+          const list = await lootNear(s, 1600);
+          if (!list.length || s.player.cargo.ore + s.player.cargo.salvage >= s.player.cargo.capacity) break;
+          // the nearest loose piece, re-chosen every leg as the field drifts
+          let latest = null;
+          await cruise(q => { const l = q.loot; if (!l || !l.length) return null; l.sort((a, b) => near(a, q.player) - near(b, q.player)); latest = l[0]; return latest; }, 60, 28, 90);
+          const res = await chase(page, 400, 14, 75);
+          got += res.got; fuel += res.fuel;
+          if (res.hits.length) console.log('   hits while collecting:', res.hits.slice(0, 4).map(h => `${h.t}s -${h.dmg} ${h.src} ${JSON.stringify(h.near)}`).join(' | '));
+          if (!res.alive) break;
+        }
+        await mark(`debris: picked up ${got} pieces${fuel > 0 ? `, ${fuel.toFixed(0)} fuel` : ''}`, null);
+      } else if (salvageEvent && room > 0) {
+        await cruise(q => { const e = q.events.find(e => e.id === salvageEvent.id && !e.resolved && !e.failed); return e ? { x: e.x, y: e.y } : null; }, 120, 35, 120);
+        const s5 = await api.state(page);
+        if (!(await lootNear(s5, 1600)).length) { emptyMarkers.add(salvageEvent.id); await mark('reached the debris marker: nothing loose left', null); }
+      } else if (stranded) {
+        await cruise(q => { const e = q.events.find(e => e.kind === 'stranded' && !e.resolved && !e.failed); return e && e.target && e.target.alive ? { x: e.target.x, y: e.target.y } : null; }, 5, 30, 150);
+        await page.evaluate(() => window.__sf.transfer(true));
+        await api.run(page, {}, 6);
+        await page.evaluate(() => window.__sf.transfer(false));
+        await api.run(page, {}, 3);
+        await mark('stranded shuttle refuelled', 'rescue reward');
+      } else if (fight) {
+        const k0 = st.kills;
+        await cruise(q => { const e = q.events.find(e => e.kind === fight.kind && !e.resolved && !e.failed); return e ? { x: e.x, y: e.y } : null; }, 120, 45, 120);
+        const res = await autoFight(page, 90, 45);
+        const s2 = await api.state(page);
+        kills += s2.kills - k0;
+        await mark(`${fight.kind}: ${s2.kills - k0} kills`, 'bounties and rewards');
+        if (s2.player.alive) { const got = await chase(page, 250, 14, 40); if (got.got) await mark(`picked up ${got.got} pieces after the fight`, null); }
+      } else if (room >= 3) {
+        const mines = st.pads.filter(p => p.kind === 'mine' && p.alive && p.stock >= 3);
+        const withPos = mines.map(m => { const b = st.bodies.find(q => q.name === m.body); return { m, b, d: b ? near(b, st.player) : 1e9 }; }).filter(q => q.d < 6000).sort((a, b) => a.d - b.d);
+        if (!withPos.length) { await api.run(page, {}, 20); await mark('nothing to do: waiting', null); continue; }
+        const { m, b } = withPos[0];
+        await cruise(q => { const bb = q.bodies.find(z => z.name === b.name); const d = near(bb, q.player) || 1; return { x: bb.x + (q.player.x - bb.x) / d * (bb.r * 1.6 + 100), y: bb.y + (q.player.y - bb.y) / d * (bb.r * 1.6 + 100), vx: bb.vx, vy: bb.vy }; }, 30, 45, 200, q => q.bodies.find(z => z.name === b.name));
+        const res = await autoLand(page, b.name, m.name, 150);
+        if (res.landed) {
+          for (let k = 0; k < 12; k++) { await api.run(page, {}, 3); const s3 = await api.state(page); const pad = s3.pads.find(q => q.name === m.name); if (!pad || pad.stock <= 0 || s3.player.cargo.ore >= s3.player.cargo.capacity) break; }
+          await mark(`landed at ${m.name} on ${b.name}, loaded ore`, null);
+          const c = await climb(page, 70, 20, 60);
+          if (!c.alive) { await mark('lost on the climb', null); continue; }
+        } else { await mark(`could not land at ${m.name} (${res.alive ? 'stuck' : 'died'})`, null); if (res.hits.length) console.log('   landing hits:', res.hits.slice(-4).map(h => `${h.t}s alt ${h.alt} -${h.dmg} ${h.src} ${h.near}`).join(' | ')); console.log('   lander log tail:', JSON.stringify(res.log.slice(-3))); }
+      } else {
+        await api.run(page, {}, 10);
+      }
+      const s4 = await api.state(page);
+      if (!s4.player.alive) continue;
+      if (s4.credits !== creditsStart) await mark('rewards came in during the phase', 'bounties and rewards');
+      if (s4.time - tStart < 3) await api.run(page, {}, 3);
+      const cargo = s4.player.cargo.ore + s4.player.cargo.salvage;
+      const needDock = cargo >= 5 || s4.player.fuel < 35 || s4.player.hull < 65 || s4.credits >= price || (cargo > 0 && !(await lootNear(s4, 1600)).length && !s4.events.some(e => !e.resolved && !e.failed && e.kind === 'salvage' && near(e, s4.player) < 2500));
+      if (needDock) { const ok = await dockAtHarbour(); if (!ok) await mark(`could not dock ${await postMortem()}`, null); }
+    }
+    st = await api.state(page);
+    console.log(`RESULT seed ${seed}: drive ${bought ? 'BOUGHT' : 'NOT bought'} after ${(st.time / 60).toFixed(1)} min of play; credits ${Math.round(st.credits)}; deaths ${deaths}; kills ${kills}; income by source ${JSON.stringify(income)}`);
   },
 
   async cut({ page }) {
@@ -2310,6 +2622,11 @@ const sliceScenarios = {
   },
 };
 Object.assign(scenarios, sliceScenarios);
+// an ad-hoc script: SF_SCRIPT=<path to an .mjs whose default export is async ({ page, api, helpers }) => {}>
+scenarios.script = async ({ page }) => {
+  const mod = await import(pathToFileURL(path.resolve(process.env.SF_SCRIPT)).href);
+  await mod.default({ page, api, helpers: { autoLand, autoDock, autoFight, follow, chase, climb, pull } });
+};
 
 const { browser, page, errors } = await launch();
 try {

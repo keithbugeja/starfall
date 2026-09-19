@@ -104,7 +104,7 @@ function landedServices(w: World, dt: number): void {
     if (pod && pod.alive && Math.hypot(pod.pos.x - p.pos.x, pod.pos.y - p.pos.y) < 14) {
       release(w, p);
       podDelivered(w, pod, pad);
-      comm(w, pad.name, 'POD RECEIVED. THE COLONISTS ARE SAFE. +150 CR', [0.6, 1, 0.7], 2);
+      comm(w, pad.name, 'POD RECEIVED. THE COLONISTS ARE SAFE. +200 CR', [0.6, 1, 0.7], 2);
       sfx(w, 'success');
     }
     if (pad.kind === 'mine') {

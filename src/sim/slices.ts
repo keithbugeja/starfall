@@ -437,7 +437,7 @@ export function podDelivered(w: World, pod: Pickup, where: Pad | null): void {
   pod.alive = false;
   w.rescued++;
   w.score += 400;
-  w.credits += 150;
+  w.credits += 200;
   if (where && pod.home === where) where.population++;
   void gravityAt; void gTmp;
 }

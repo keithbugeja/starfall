@@ -74,6 +74,7 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
     d.initialized = true;
     for (const b of enemyBases(w)) for (let i = 0; i < b.guns; i++) spawnSentinel(w, b, i);
     comm(w, 'CONTROL', `PATROL KESTREL, CLEARED TO LAUNCH. THE STARFALL ON ${w.enemyCore ? w.enemyCore.body.name : 'THE OUTER WORLD'} IS ACTIVE AGAIN. KEEP THE COLONIES ALIVE. KILL THE CORE WHEN YOU CAN.`, [0.6, 0.9, 1], 1);
+    if (w.systemId === 'home') comm(w, 'CONTROL', `THE HARBOUR YARD HAS A SHORT JUMP DRIVE FOR 900. BOUNTIES, SALVAGE AND ORE ALL PAY. THE FLARE STAR IS FOUR UNITS OUT.`, [0.6, 0.9, 1], 0);
   }
   if (w.gameOver) return;
   // threat grows with time and with the number of enemy bases; falls when bases die
@@ -198,12 +199,14 @@ function openingSalvage(w: World, d: DirectorState): void {
   spawnPickup(w, 'wreck', x, y, vx, vy, 0, null, 'WRECK');
   for (let i = 0; i < 5; i++) {
     const aa = w.rng.next() * TAU;
-    const p = spawnPickup(w, 'salvage', x + Math.cos(aa) * 5, y + Math.sin(aa) * 5, vx + Math.cos(aa) * 1.2, vy + Math.sin(aa) * 1.2, 45);
+    // the opening field holds together: a slow spread, so a pilot who reads the comm finds it whole
+    const p = spawnPickup(w, 'salvage', x + Math.cos(aa) * 5, y + Math.sin(aa) * 5, vx + Math.cos(aa) * 0.4, vy + Math.sin(aa) * 0.4, 45);
     p.life = 600;
   }
   spawnPickup(w, 'fuel', x + 3, y - 3, vx, vy, 40).life = 600;
   const e = newEvent(w, 'salvage', { x, y }, `DEBRIS FIELD NEAR ${st.name}`, 400, 0);
   e.data.n = 5;
+  e.data.orbit = { body: b, r, angle: a, rate: Math.sqrt(b.mass / (r * r * r)), t0: w.time };
   comm(w, 'CONTROL', `A FREIGHTER BROKE UP NEAR ${st.name} LAST NIGHT. FLY THROUGH THE DEBRIS TO COLLECT IT. IT SELLS AT ANY STATION.`, [0.6, 0.9, 1], 2, { x, y });
   d.lastEventKind = 'salvage';
 }
@@ -414,12 +417,13 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
       const n = 4 + w.rng.int(3);
       for (let i = 0; i < n; i++) {
         const aa = w.rng.next() * TAU;
-        const p = spawnPickup(w, 'salvage', x + Math.cos(aa) * 6, y + Math.sin(aa) * 6, vx + Math.cos(aa) * 1.5, vy + Math.sin(aa) * 1.5, 45);
+        const p = spawnPickup(w, 'salvage', x + Math.cos(aa) * 6, y + Math.sin(aa) * 6, vx + Math.cos(aa) * 0.9, vy + Math.sin(aa) * 0.9, 45);
         p.life = 400;
       }
       if (w.rng.chance(0.3)) spawnPickup(w, 'fuel', x + 3, y - 3, vx, vy, 40).life = 400;
       const e = newEvent(w, 'salvage', { x, y }, `DEBRIS FIELD NEAR ${b.name}`, 300, 0);
       e.data.n = n;
+      e.data.orbit = { body: b, r, angle: a, rate: Math.sqrt(b.mass / (r * r * r)), t0: w.time };
       comm(w, 'CONTROL', `SENSORS: DEBRIS FIELD DETECTED NEAR ${b.name}. SALVAGE BEFORE IT DISPERSES.`, [0.6, 0.9, 1], 1, { x, y });
       break;
     }
@@ -498,9 +502,12 @@ function updateEvents(w: World, dt: number): void {
         const f = e.target as Ship;
         if (f.alive) e.pos = { x: f.pos.x, y: f.pos.y };
         const attackers = alive.filter(s => s.faction === 'enemy');
+        // the escort earns the fee: the Kestrel flew with the freighter, or shot one of its attackers
+        if (f.alive && dist(f.pos, pl.pos) < 300) e.data.escorted = true;
+        const helped = e.data.escorted === true || e.ships.some(s => !s.alive && s.faction === 'enemy' && s.lastHitBy === 'player');
         if (!f.alive && !f.docked) resolve(w, e, false, `THE FREIGHTER IS GONE. SALVAGE WHAT YOU CAN.`);
-        else if (f.docked) resolve(w, e, true, `FREIGHTER MADE IT IN. THANK YOU, KESTREL.`);
-        else if (attackers.length === 0) resolve(w, e, true, `CONVOY CLEAR. ATTACKERS DESTROYED.`);
+        else if (f.docked) { if (!helped) e.reward = 0; resolve(w, e, true, helped ? `FREIGHTER MADE IT IN. THANK YOU, KESTREL.` : `FREIGHTER MADE IT IN ON ITS OWN.`); }
+        else if (attackers.length === 0) { if (!helped) e.reward = 0; resolve(w, e, true, `CONVOY CLEAR. ATTACKERS DESTROYED.`); }
         else if (e.timer <= 0) { e.timer = 60; }
         break;
       }
@@ -508,7 +515,7 @@ function updateEvents(w: World, dt: number): void {
         const st = e.target as Station;
         const dn = e.ships.find(s => s.kind === 'dreadnought');
         if (!st.alive) resolve(w, e, false, `${st.name} HAS FALLEN.`);
-        else if (dn && !dn.alive) { resolve(w, e, true, `SIEGE BROKEN. ${st.name} STANDS.`, st.name); w.stats.basesDestroyed += 0; }
+        else if (dn && !dn.alive) { if (dn.lastHitBy !== 'player') e.reward = 0; resolve(w, e, true, dn.lastHitBy === 'player' ? `SIEGE BROKEN. ${st.name} STANDS.` : `THE DREADNOUGHT IS DOWN. ${st.name} HELD ITS OWN.`, st.name); }
         else if (e.timer <= 0) { e.timer = 120; }
         break;
       }
@@ -539,7 +546,7 @@ function updateEvents(w: World, dt: number): void {
         const builder = e.ships[0];
         const b = e.data.body as Body;
         const angle = e.data.angle as number;
-        if (!builder.alive) { resolve(w, e, true, `CONSTRUCTOR DESTROYED. ${b.name} STAYS OURS.`); break; }
+        if (!builder.alive) { if (builder.lastHitBy !== 'player') e.reward = 0; resolve(w, e, true, `CONSTRUCTOR DESTROYED. ${b.name} STAYS OURS.`); break; }
         // builder flies to the site and then 'lands' by proximity to the surface point
         const wa = angle + (b.rotates ? b.spinAngle : 0);
         const site = { x: b.pos.x + Math.cos(wa) * (b.radius * 1.0 + 12), y: b.pos.y + Math.sin(wa) * (b.radius + 12) };
@@ -562,7 +569,7 @@ function updateEvents(w: World, dt: number): void {
             resolve(w, e, false, `ENEMY BASE ESTABLISHED ON ${b.name}.`);
           }
         }
-        if (e.timer <= 0 && d >= 8) resolve(w, e, true, `CONSTRUCTOR NEVER ARRIVED.`);
+        if (e.timer <= 0 && d >= 8) { e.reward = 0; resolve(w, e, true, `CONSTRUCTOR NEVER ARRIVED.`); }
         break;
       }
       case 'rogue': {
@@ -587,13 +594,18 @@ function updateEvents(w: World, dt: number): void {
           // pad impact is handled by asteroid terrain collision; detect by asteroid death near the target
           if (d < 12 && !ast.alive) e.data.hit = true;
         }
-        if (e.timer <= -10 && ast.alive) resolve(w, e, true, `THE ROCK MISSED. GRAVITY IS A FICKLE THING.`);
+        if (e.timer <= -10 && ast.alive) { e.reward = 0; resolve(w, e, true, `THE ROCK MISSED. GRAVITY IS A FICKLE THING.`); }
         // padDamaged marks the hit when the asteroid strikes; check after
         if (!ast.alive && !e.data.hit && d < 14) e.data.hit = true;
         break;
       }
       case 'salvage': {
-        if (e.timer <= 0) { e.resolved = true; }
+        // the marker rides the field's orbit; the beat ends when nothing loose is left near it
+        const o = e.data.orbit as { body: Body; r: number; angle: number; rate: number; t0: number } | undefined;
+        if (o) { const a = o.angle + o.rate * (w.time - o.t0); e.pos.x = o.body.pos.x + Math.cos(a) * o.r; e.pos.y = o.body.pos.y + Math.sin(a) * o.r; }
+        const left = w.pickups.some(k => k.alive && !k.carriedBy && k.kind === 'salvage' && dist(k.pos, e.pos) < 400);
+        if (!left && w.time - e.startTime > 5) resolve(w, e, true, 'DEBRIS FIELD RECOVERED.');
+        else if (e.timer <= 0) { e.resolved = true; }
         break;
       }
       case 'flare': {
@@ -602,7 +614,7 @@ function updateEvents(w: World, dt: number): void {
         break;
       }
       case 'hunt': {
-        if (alive.length === 0) resolve(w, e, true, `HUNTER PACK DESTROYED.`);
+        if (alive.length === 0) { if (!e.ships.some(s => s.lastHitBy === 'player')) e.reward = 0; resolve(w, e, true, `HUNTER PACK DESTROYED.`); }
         else { const near = alive.find(s => dist(s.pos, pl.pos) < 500); e.pos = near ? { x: near.pos.x, y: near.pos.y } : e.pos; if (e.timer <= 0) e.resolved = true; }
         break;
       }

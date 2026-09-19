@@ -14,7 +14,8 @@ import { padWorldPos } from './sim/bodies';
 import { poweredAt, socketWorld } from './sim/power';
 import { structurePos } from './sim/structures';
 import { checkDrive } from './sim/drive';
-import { bidOf, priceOf } from './sim/market';
+import { bidOf, priceOf, sellTo } from './sim/market';
+import { upgradeById } from './sim/upgrades';
 import { GEOGRAPHY, validatePlanet } from './gen/planet';
 import { canSense, losBlocker, signature, sunlight } from './sim/sense';
 import { createAsteroid, gravityAt, predictTrajectory, spawnPickup, type Trajectory } from './sim/physics';
@@ -109,6 +110,19 @@ const harness = {
   drive(target: string | null): void { const p = game.world.player; if (!p.upgrades.includes('drive')) { p.upgrades.push('drive'); applyUpgrades(p); } p.drive.target = target; },
   charge(on: boolean): void { game.harnessCharge = on; },
   saveRun(): void { game.saveRun(); },
+  /** The dock's rows, as calls: what a docked player can do with credits. */
+  sell(good: 'ore' | 'salvage'): number { const w = game.world, p = w.player, st = p.docked; if (!st) return 0; const n = p.cargo[good]; if (n <= 0) return 0; let paid = 0; if (st.market && st.market[good] && st.market[good].buys) paid = sellTo(st, good, n); else paid = n * (good === 'ore' ? st.orePrice : st.salvagePrice); w.credits += paid; p.cargo[good] = 0; return paid; },
+  buyFuel(): number { const w = game.world, p = w.player, st = p.docked; if (!st) return 0; const need = p.fuelMax - p.fuel; const afford = Math.min(need, w.credits / st.fuelPrice); const cost = Math.ceil(afford * st.fuelPrice); w.credits -= cost; p.fuel += afford; return cost; },
+  buyRepair(): number { const w = game.world, p = w.player, st = p.docked; if (!st) return 0; const need = p.hullMax - p.hull; const afford = Math.min(need, w.credits / 1.5); const cost = Math.ceil(afford * 1.5); w.credits -= cost; p.hull += afford; return cost; },
+  buy(id: string): boolean { const w = game.world, p = w.player, st = p.docked; const u = upgradeById(id); if (!st || !u || !st.upgrades.includes(id) || p.upgrades.includes(id) || w.credits < u.price) return false; w.credits -= u.price; p.upgrades.push(id); applyUpgrades(p); return true; },
+  /** The nearest things to the ship: a post-mortem for the bench. */
+  surroundings(): unknown { const w = game.world, p = w.player; const d = (o: { x: number; y: number }) => Math.hypot(o.x - p.pos.x, o.y - p.pos.y); const pick = <T extends { pos: { x: number; y: number } }>(list: T[], name: (t: T) => string) => { let best: T | null = null, bd = 1e9; for (const o of list) { const dd = d(o.pos); if (dd < bd) { bd = dd; best = o; } } return best ? `${name(best)}@${bd.toFixed(0)}` : '-'; }; return { body: pick(w.bodies.filter(b => b.kind !== 'star'), b => `${b.name}(r${b.radius.toFixed(0)}/${b.maxRadius.toFixed(0)})`), station: pick(w.stations, s => s.name), enemy: pick(w.ships.filter(s => s.alive && s.faction === 'enemy'), s => s.kind), ship: pick(w.ships.filter(s => s.alive && s !== p && s.faction !== 'enemy'), s => s.kind), wreck: pick(w.pickups.filter(k => k.alive && k.kind === 'wreck'), () => 'wreck'), asteroid: pick(w.asteroids.filter(a => a.alive), a => `rock(r${a.radius.toFixed(0)})`), speed: Math.hypot(p.vel.x, p.vel.y).toFixed(1), source: p.lastDamageSource, hitBy: p.lastHitBy }; },
+  drivePrice(): number { return upgradeById('drive')?.price ?? 0; },
+  /** Loose things near a point, for a pilot who picks up after a fight. */
+  loot(x: number, y: number, r: number): unknown { const w = game.world; return w.pickups.filter(k => k.alive && !k.carriedBy && !k.socketBody && (k.kind === 'salvage' || k.kind === 'ore' || k.kind === 'fuel') && Math.hypot(k.pos.x - x, k.pos.y - y) < r && w.bodies.every(b => b.kind === 'star' || Math.hypot(k.pos.x - b.pos.x, k.pos.y - b.pos.y) > (b.kind === 'hull' ? b.radius + 80 : b.radius * 1.5 + 40))).map(k => ({ x: k.pos.x, y: k.pos.y, vx: k.vel.x, vy: k.vel.y, kind: k.kind })); },
+  enemyKindsNear(x: number, y: number, r: number): string[] { return game.world.ships.filter(s => s.alive && s.faction === 'enemy' && s.kind !== 'sentinel' && Math.hypot(s.pos.x - x, s.pos.y - y) < r).map(s => s.kind); },
+  enemiesNear(x: number, y: number, r: number): number { return game.world.ships.filter(s => s.alive && s.faction === 'enemy' && s.kind !== 'sentinel' && Math.hypot(s.pos.x - x, s.pos.y - y) < r).length; },
+  harbourParent(): string { const st = game.world.stations.find(s => s.kind === 'harbour'); return st && st.orbit ? st.orbit.parent.name : ''; },
   loadRun(): boolean { return game.loadRun(); },
   prices(): unknown { return game.world.pricesSeen; },
   market(name: string): unknown { const st = game.world.stations.find(s => s.name === name); return st && st.market ? Object.fromEntries(Object.entries(st.market).map(([g, e]) => [g, { stock: e.stock, price: priceOf(e), bid: bidOf(e), buys: e.buys, sells: e.sells }])) : null; },
@@ -235,16 +249,17 @@ const harness = {
         docked: p.docked ? p.docked.name : null, speed: Math.hypot(p.vel.x, p.vel.y),
         cargo: p.cargo, heat: p.heat, overheated: p.overheated, lastDamageSource: p.lastDamageSource, tethered: !!p.tether, stunned: p.stunned,
       },
-      bodies: w.bodies.map(b => ({ name: b.name, kind: b.kind, x: b.pos.x, y: b.pos.y, r: b.radius, pads: b.pads.map(pd => ({ name: pd.name, kind: pd.kind, angle: pd.angle, alive: pd.alive, pop: pd.population })) })),
-      stations: w.stations.map(s => ({ name: s.name, x: s.pos.x, y: s.pos.y, vx: s.vel.x, vy: s.vel.y, angle: s.angle, spin: s.spin, r: s.radius, alive: s.alive })),
+      bodies: w.bodies.map(b => ({ name: b.name, kind: b.kind, x: b.pos.x, y: b.pos.y, vx: b.vel.x, vy: b.vel.y, r: b.radius, pads: b.pads.map(pd => ({ name: pd.name, kind: pd.kind, angle: pd.angle, alive: pd.alive, pop: pd.population })) })),
+      stations: w.stations.map(s => ({ name: s.name, kind: s.kind, x: s.pos.x, y: s.pos.y, vx: s.vel.x, vy: s.vel.y, angle: s.angle, spin: s.spin, r: s.radius, alive: s.alive })),
       ships: w.ships.filter(s => s.alive).map(s => ({ kind: s.kind, faction: s.faction, x: s.pos.x, y: s.pos.y, vx: s.vel.x, vy: s.vel.y, hull: s.hull, mode: s.ai?.mode ?? null, wave: s.ai?.wave ?? 0, carrying: !!s.ai?.carrying, heat: s.heat, overheated: s.overheated, sensed: w.time - s.sensedAt < 0.3 })),
       asteroids: w.asteroids.length,
       journal: w.journal.length,
       structures: w.structures.filter(s => s.alive).length,
       projectiles: w.projectiles.length,
       pickups: w.pickups.filter(p => p.alive).map(p => ({ kind: p.kind, name: p.name, x: p.pos.x, y: p.pos.y, vx: p.vel.x, vy: p.vel.y, tethered: !!p.tetheredBy })),
-      events: w.events.map(e => ({ kind: e.kind, label: e.label, timer: e.timer, resolved: e.resolved, failed: e.failed, phase: e.phase })),
+      events: w.events.map(e => ({ id: e.id, kind: e.kind, label: e.label, timer: e.timer, resolved: e.resolved, failed: e.failed, phase: e.phase, x: e.pos.x, y: e.pos.y, target: e.target ? { ...('pos' in e.target ? { x: e.target.pos.x, y: e.target.pos.y } : padWorldPos(e.target, 0)), alive: e.target.alive } : null })),
       comms: w.comms.slice(-8).map(c => `${c.from}: ${c.text}`),
+      flare: { active: w.flare.active, warned: w.flare.warned, timer: w.flare.timer },
       score: w.score, credits: w.credits, lives: w.lives, threat: w.threat, kills: w.kills, gameOver: w.gameOver,
       frameTime: game.frameTime, frameCount: game.frameCount,
       cam: { x: game.camPos.x, y: game.camPos.y, h: game.camHeight },

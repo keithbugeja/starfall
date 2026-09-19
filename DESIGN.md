@@ -349,6 +349,30 @@ EXPANSION.md's smallest slice, built to see whether the larger structure improve
   boosting; arrival home is 6400 units out, 3.5 minutes coasting, 50 s boosting. The port sells ore
   at 18 and pays 63 for salvage; the home refinery pays 38 for ore and sells salvage at 28; a hold of
   eight ore clears about 150 credits a trip before fuel, sixteen with the rack about 300.
+- **The first drive (economy pass).** The human playtest could not earn the drive in a reasonable
+  session, so the early economy was re-cut as a whole rather than one price. The harbour's yard lists
+  a short jump drive first, at 900; a fresh Kestrel starts with 350, and CONTROL names the goal at the
+  first launch. Rewards up: bounties pay three quarters (wasp 90, lancer 225, reaver 300), a delivered
+  pod 200, home-world mines hold six to eight ore and refuel for free. Sinks down and priced by place:
+  repairs 1.5 a point, fuel 1.2 at the harbour, 0.8 at the refinery, 2 at the research station, 3 at
+  the free port, free at colonies and mines. Rewards pay for the player's part only: a rock that
+  misses on its own, a constructor that never arrives or that colony guns kill, a siege the harbour
+  breaks by itself, a convoy nobody flew with, a hunter pack somebody else shot, all pay nothing (they
+  paid 300 to 1500 before, which is how the scripted pilot first "bought" the drive in under four
+  minutes). The debris-field marker rides the field's orbit and the beat ends when the field is
+  recovered; the opening field spreads at 0.4 a second so it is still a field when a pilot who read
+  the comm arrives.
+  Measured with the scripted pilot (`earn` scenario; it carries spare hulls so a death does not
+  truncate the run, thrusts against gravity continuously so its fuel spend is a human's upper bound,
+  and refuels at the harbour for money rather than free at a mine): the opening debris is five to
+  eight pieces, 195 to 297 credits, in hand by 1.5 to 3.5 minutes on every seed tried; a home-world
+  mine run is seven or eight ore, 180 to 217 at the harbour, about a minute and a half a cycle; a
+  peaceful pilot reaches 900 after the debris and two or three mine runs, 8 to 11 minutes without
+  deaths (seed 7: 11.0 minutes with one death; seed 3: 4.9 minutes, the opening raid repelled for
+  300 and a wasp rammed for 90; seed 11: 867 credits at 9.4 minutes with one death). A death costs
+  the hold. The pilot's deaths came from the rubble ring 50 units below the harbour, the Slipway
+  sweeping every home-world approach column at 14 units a second every minute, flares in the open,
+  and wasps it would not fight; a human sees all four.
 - **What is ledgered and what is not.** Destroyed bases and cores (and their machinery), lost pads,
   discovered names, threat, the director's opening and timers, station stocks (relaxing over ten
   minutes away), the Pilgrim's state (a Pilgrim in flight when you leave is lost), whether the Cut's

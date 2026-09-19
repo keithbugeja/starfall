@@ -135,7 +135,7 @@ export function generateSystem(seed: number, seedName: string): World {
   };
   const mine = (b: Body, angle: number): Pad => {
     const p = addPad(b, 'mine', names.mine(), angle, 4);
-    p.stock = 2 + rng.int(4); p.fuel = true;
+    p.stock = 6 + rng.int(3); p.fuel = true;
     return p;
   };
   // home world: two colonies and a mine, each where the ground asks for it (a crater floor, a valley, a canyon); a mine on its moon
@@ -197,7 +197,9 @@ export function generateSystem(seed: number, seedName: string): World {
     return cands.length ? cands[0] : Math.max(...moons.map(m => m.orbit!.radius + m.maxRadius + 95), minR);
   };
   const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: clearOrbit(home.body, home.body.radius * 3.4), period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
-  harbour.upgrades = ['retro', 'strafe', 'struts', 'tank', 'armour', 'scatter', 'mass', 'seeker', 'sensors', 'cargo', 'drive'];
+  harbour.upgrades = ['drive', 'retro', 'strafe', 'struts', 'tank', 'armour', 'scatter', 'mass', 'seeker', 'sensors', 'cargo'];
+  // fuel is made over the giant and imported here; repairs are cheap at the yard
+  harbour.fuelPrice = 1.2;
   // the harbour takes ore and salvage at fair prices; the refinery pays for ore and sells the parts it makes; research pays for parts
   harbour.market = makeMarket({ ore: { base: 30, stock: 40 }, salvage: { base: 45, stock: 20 } });
   // start the harbour on the far side from every moon of its world so the first launch has room
@@ -221,10 +223,12 @@ export function generateSystem(seed: number, seedName: string): World {
   const refinery = createStation(w, { name: names.station('refinery', refineryHost.name), kind: 'refinery', parent: refineryHost, orbitRadius: clearOrbit(refineryHost, refineryHost.radius * (refineryHost.kind === 'gas' ? 2.4 : 3.2)), period: 1000 + rng.int(300), phase: rng.next() * TAU, radius: 12, spin: 0.27 });
   refinery.upgrades = ['engine', 'tank', 'cargo', 'armour', 'retro', 'mass', 'heatshield', 'tractor', 'struts'];
   refinery.orePrice = 42; refinery.salvagePrice = 40;
+  refinery.fuelPrice = 0.8;
   refinery.market = makeMarket({ ore: { base: 42, stock: 30 }, salvage: { base: 28, stock: 30, buys: false, sells: true } });
   const research = createStation(w, { name: names.station('research', mid.body.name), kind: 'research', parent: mid.body, orbitRadius: clearOrbit(mid.body, mid.body.radius * 4.0), period: 1100 + rng.int(300), phase: rng.next() * TAU, radius: 11, spin: -0.22 });
   research.upgrades = ['gravdamp', 'sensors', 'rail', 'tractor', 'heatshield', 'strafe', 'seeker'];
   research.salvagePrice = 60;
+  research.fuelPrice = 2;
   research.market = makeMarket({ salvage: { base: 60, stock: 10 } });
   w.respawnStation = harbour;
 
@@ -352,7 +356,7 @@ export function generateSystem(seed: number, seedName: string): World {
   player.docked = harbour;
   player.vel.x = harbour.vel.x; player.vel.y = harbour.vel.y;
   w.player = player;
-  w.credits = 250;
+  w.credits = 350;
   w.threat = 0;
   return w;
 }

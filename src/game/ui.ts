@@ -129,16 +129,16 @@ export function drawDocked(g: Game): void {
   const fuelNeed = p.fuelMax - p.fuel;
   const fuelCost = Math.ceil(fuelNeed * st.fuelPrice);
   const repairNeed = p.hullMax - p.hull;
-  const repairCost = Math.ceil(repairNeed * 3);
+  const repairCost = Math.ceil(repairNeed * 1.5);
   rows.push({ label: 'REFUEL', right: fuelNeed < 0.5 ? 'FULL' : `${fuelCost} CR`, enabled: fuelNeed >= 0.5 && w.credits >= Math.min(fuelCost, 1), action: () => {
     const afford = Math.min(fuelNeed, w.credits / st.fuelPrice);
     if (afford <= 0) { sfx(w, 'deny'); return; }
     w.credits -= Math.ceil(afford * st.fuelPrice); p.fuel += afford; sfx(w, 'buy');
   } });
   rows.push({ label: 'REPAIR HULL', right: repairNeed < 0.5 ? 'INTACT' : `${repairCost} CR`, enabled: repairNeed >= 0.5 && w.credits > 0, action: () => {
-    const afford = Math.min(repairNeed, w.credits / 3);
+    const afford = Math.min(repairNeed, w.credits / 1.5);
     if (afford <= 0) { sfx(w, 'deny'); return; }
-    w.credits -= Math.ceil(afford * 3); p.hull += afford; sfx(w, 'buy');
+    w.credits -= Math.ceil(afford * 1.5); p.hull += afford; sfx(w, 'buy');
   } });
   if (p.secondary) {
     const need = 6 - p.secondary.ammo;

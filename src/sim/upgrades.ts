@@ -27,7 +27,7 @@ export const UPGRADES: UpgradeDef[] = [
   { id: 'rail', name: 'RAIL DRIVER', price: 1500, desc: 'HYPERVELOCITY SLUG. IGNORES GRAVITY.', cost: 'SLOW FIRE. HEATS HARD', weapon: 'rail', shop: ['research'] },
   { id: 'mass', name: 'MASS DRIVER', price: 1100, desc: 'HEAVY SHELL, 45 DAMAGE. FALLS WITH GRAVITY.', cost: 'SLOW SHELL. RECOIL', weapon: 'mass', shop: ['refinery', 'harbour'] },
   { id: 'seeker', name: 'SEEKER RACK', price: 700, desc: 'SIX HOMING MISSILES (X). REARM AT STATIONS.', cost: 'MISSILES BEND IN GRAVITY TOO', shop: ['harbour', 'research'] },
-  { id: 'drive', name: 'JUMP DRIVE', price: 1400, desc: 'REACHES ANOTHER STAR. CHART (M, THEN V) PICKS IT. CLEAR OF EVERY WELL, NOSE ON ITS BEARING, HOLD G.', cost: 'MASS +10%. CHARGING IS LOUD AND HOT. FUEL BY DISTANCE AND MASS', shop: ['harbour'] },
+  { id: 'drive', name: 'JUMP DRIVE (SHORT)', price: 900, desc: 'REACHES ANOTHER STAR. CHART (M, THEN V) PICKS IT. CLEAR OF EVERY WELL, NOSE ON ITS BEARING, HOLD G.', cost: 'MASS +10%. CHARGING IS LOUD AND HOT. FUEL BY DISTANCE AND MASS', shop: ['harbour'] },
 ];
 
 export function upgradeById(id: string): UpgradeDef | undefined { return UPGRADES.find(u => u.id === id); }

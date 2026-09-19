@@ -374,8 +374,8 @@ export function killShip(w: World, s: Ship, source: DamageSource): void {
   if (s.faction === 'enemy' && s.lastHitBy === 'player') {
     w.kills++;
     w.score += s.bounty;
-    w.credits += Math.round(s.bounty * 0.5);
-    w.bounties += Math.round(s.bounty * 0.5);
+    w.credits += Math.round(s.bounty * 0.75);
+    w.bounties += Math.round(s.bounty * 0.75);
     if (s.kind === 'dreadnought') comm(w, 'CONTROL', 'DREADNOUGHT DESTROYED. OUTSTANDING, PILOT.', [1, 0.9, 0.5], 1);
   }
   if (s.faction === 'civ' && source === 'weapon') {
