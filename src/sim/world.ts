@@ -135,7 +135,15 @@ export interface Ship {
   lastHitOwner: number; // id of the ship whose shot last hit us
   sensedAt: number;     // last time the player's sensors had this ship
   lastShotHeat: number; // heat of the last weapon fired: bigger guns flash brighter
+  drive: DriveState;    // the jump drive, if fitted (an upgrade); its target is a system id
 }
+
+/** A good a station trades: its stock moves with what is sold into it and bought from it; its price follows the stock. */
+export interface MarketEntry { stock: number; base: number; baseStock: number; buys: boolean; sells: boolean; }
+/** A price the player has seen somewhere, with when. */
+export interface PriceSeen { system: string; station: string; good: string; price: number; time: number; }
+/** The jump drive's state on a ship. */
+export interface DriveState { target: string | null; charge: number; charging: boolean; }
 
 export interface Cargo {
   ore: number;
@@ -232,6 +240,7 @@ export interface Station {
   orePrice: number;
   salvagePrice: number;
   upgrades: string[];   // available upgrade ids
+  market: Record<string, MarketEntry> | null; // what it trades, or null for a station that only buys ore and salvage at fixed prices
   siege: number;        // > 0 while under attack
   defenceTimer: number;
   discovered: boolean;
@@ -262,6 +271,10 @@ export interface Beam {
 }
 
 export interface World {
+  systemId: string;        // which system of the sector this world is
+  machinePresence: number; // 0: the Tide is not here; 1: it is
+  flareRate: number;       // how often the star flares, relative to the home star
+  pricesSeen: PriceSeen[]; // what the player has seen prices be, anywhere
   seed: number;
   seedName: string;
   rng: Rng;
@@ -492,6 +505,7 @@ export function createShip(w: World, kind: ShipKind, faction: Faction, x: number
     lastHitOwner: -1,
     sensedAt: -1e9,
     lastShotHeat: 0,
+    drive: { target: null, charge: 0, charging: false },
   };
   w.ships.push(ship);
   return ship;
@@ -513,6 +527,7 @@ export function shipBase(kind: ShipKind): { name: string; radius: number; hull: 
 export function createEmptyWorld(seed: number, seedName: string): World {
   const rng = new Rng(seed);
   const w: World = {
+    systemId: 'home', machinePresence: 1, flareRate: 1, pricesSeen: [],
     seed, seedName, rng, time: 0, tick: 0,
     bodies: [], star: null as unknown as Body, ships: [], projectiles: [], asteroids: [], pickups: [], stations: [], pads: [],
     player: null as unknown as Ship,

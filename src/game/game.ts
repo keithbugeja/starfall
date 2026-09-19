@@ -14,7 +14,7 @@ import { poweredAt, socketWorld } from '../sim/power';
 import { structureNormal, structurePos } from '../sim/structures';
 import { signature, sunlight } from '../sim/sense';
 import { inShadow } from '../sim/physics';
-import { generateSystem } from '../gen/system';
+import { createSector, instantiate, type Sector } from '../sector/sector';
 import { maxTerrainRadius, padWorldAngle, padWorldPos, terrainNormalAt, terrainRadiusAt, type Body } from '../sim/bodies';
 import { gravityAt, LAND_VN, predictTrajectory, type Trajectory } from '../sim/physics';
 import { stepWorld } from '../sim/step';
@@ -61,6 +61,8 @@ export class Game {
   /** The body whose ground the pilot is under, drawn as rock and void instead of a dome. */
   underground: Body | null = null;
   private caveDip = 0;
+  /** The run: every system, what happened in each, and the player between them. */
+  sector!: Sector;
   /** Debug: draw the void mask in colour instead of depth only. */
   debugVoid = false;
   private starfield!: StaticPoints;
@@ -145,7 +147,14 @@ export class Game {
   }
 
   newGame(seed: number, seedName: string): void {
-    this.world = generateSystem(seed, seedName);
+    this.sector = createSector(seed, seedName);
+    this.loadWorld(instantiate(this.sector, this.sector.current));
+    this.startRun();
+  }
+
+  /** Show a world: meshes, camera, and everything the renderer caches per world. */
+  loadWorld(w: World): void {
+    this.world = w;
     for (const m of this.planetMeshes.values()) this.meshes.remove(m);
     this.planetMeshes.clear();
     for (const m of this.stationMeshes.values()) this.meshes.remove(m);
@@ -166,13 +175,17 @@ export class Game {
     this.camPos.x = p.pos.x; this.camPos.y = p.pos.y;
     this.camHeight = 80;
     this.navTarget = null;
-    this.menuIndex = 0;
+    this.mapZoom = 1; this.mapPan.x = 0; this.mapPan.y = 0;
     this.respawnTimer = 0;
     this.deathTime = -1;
+  }
+
+  /** Reset what belongs to a run rather than a world. */
+  private startRun(): void {
+    this.menuIndex = 0;
     this.nextHullAt = 8000;
     this.victoryAt = -1;
     this.victoryShown = false;
-    this.mapZoom = 1; this.mapPan.x = 0; this.mapPan.y = 0;
   }
 
   /** From the title: start playing the generated system. */

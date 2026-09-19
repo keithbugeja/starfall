@@ -24,10 +24,15 @@ interface DirectorState {
 
 const D = new WeakMap<World, DirectorState>();
 
+/** The part of the director's state that should survive leaving and returning to a system. */
+export interface DirectorSnapshot { opening: number; eventTimer: number; flareCooldown: number; lastEventKind: EventKind | null; }
+export function directorSnapshot(w: World): DirectorSnapshot { const d = state(w); return { opening: d.opening, eventTimer: d.eventTimer, flareCooldown: d.flareCooldown, lastEventKind: d.lastEventKind }; }
+export function directorRestore(w: World, snap: DirectorSnapshot): void { const d = state(w); d.opening = snap.opening; d.eventTimer = Math.max(8, snap.eventTimer); d.flareCooldown = snap.flareCooldown; d.lastEventKind = snap.lastEventKind; }
+
 function state(w: World): DirectorState {
   let d = D.get(w);
   if (!d) {
-    d = { initialized: false, eventTimer: 16, trafficTimer: 20, economyTimer: 0, nextEventId: 1, lastEventKind: null, flareCooldown: 300, acc: 0, opening: 0 };
+    d = { initialized: false, eventTimer: 16, trafficTimer: 20, economyTimer: 0, nextEventId: 1, lastEventKind: null, flareCooldown: 300 / Math.max(0.1, w.flareRate), acc: 0, opening: 0 };
     D.set(w, d);
   }
   return d;
@@ -73,7 +78,7 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
   if (w.gameOver) return;
   // threat grows with time and with the number of enemy bases; falls when bases die
   const bases = enemyBases(w);
-  w.threat += dt * (1 / 95) * (1 + bases.filter(b => !b.interior).length * 0.15);
+  if (w.machinePresence > 0) w.threat += dt * (1 / 95) * (1 + bases.filter(b => !b.interior).length * 0.15);
   if (w.coreDestroyed) w.threat = Math.max(0, w.threat - dt * 0.05);
 
   // bases spawn waves (a gun position under the ground launches nothing)
@@ -113,7 +118,7 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
     d.eventTimer = Math.max(30, 75 - w.threat * 4) + w.rng.next() * 25;
     const active = w.events.filter(e => !e.resolved && !e.failed).length;
     if (d.opening === 0) { d.opening = 1; d.eventTimer = 50; openingSalvage(w, d); }
-    else if (d.opening === 1) { d.opening = 2; d.eventTimer = 60; openingRaid(w, d); }
+    else if (d.opening === 1) { d.opening = 2; d.eventTimer = 60; if (w.machinePresence > 0) openingRaid(w, d); }
     else if (active < 3) spawnEvent(w, d);
   }
   d.flareCooldown -= dt;
@@ -237,15 +242,15 @@ function spawnEvent(w: World, d: DirectorState): void {
   const colonies = livingColonies(w).filter(p => p.kind === 'colony' && p.population > 0);
   const stations = w.stations.filter(s => s.alive);
   const weights: [EventKind, number][] = [
-    ['raid', colonies.length ? 3 : 0],
+    ['raid', colonies.length && w.machinePresence > 0 ? 3 : 0],
     ['convoy', stations.length ? 2 : 0],
-    ['siege', w.threat > 4 && stations.length ? 1.2 : 0],
+    ['siege', w.threat > 4 && stations.length && w.machinePresence > 0 ? 1.2 : 0],
     ['stranded', 2],
-    ['construction', w.threat > 2.5 ? 1 : 0],
+    ['construction', w.threat > 2.5 && w.machinePresence > 0 ? 1 : 0],
     ['rogue', 1.2],
     ['salvage', 1.6],
     ['flare', d.flareCooldown <= 0 ? 1.2 : 0],
-    ['hunt', w.threat > 3 && pl.alive && !pl.docked && contactGuess(w, 90) ? 1.5 : 0],
+    ['hunt', w.threat > 3 && pl.alive && !pl.docked && contactGuess(w, 90) && w.machinePresence > 0 ? 1.5 : 0],
   ];
   // avoid repeating the same kind twice in a row
   const total = weights.reduce((a, [k, v]) => a + (k === d.lastEventKind ? v * 0.3 : v), 0);
@@ -417,7 +422,7 @@ function spawnEventOfKind(w: World, d: DirectorState, kind: EventKind): void {
       break;
     }
     case 'flare': {
-      d.flareCooldown = 360;
+      d.flareCooldown = 360 / Math.max(0.1, w.flareRate);
       w.flare.warned = true; w.flare.timer = 28; w.flare.active = false; w.flare.intensity = 0;
       const e = newEvent(w, 'flare', { x: 0, y: 0 }, `SOLAR FLARE`, 50, 0);
       e.data.phase = 'warning';

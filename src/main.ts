@@ -239,6 +239,8 @@ const harness = {
       cam: { x: game.camPos.x, y: game.camPos.y, h: game.camHeight },
       mode: game.mode,
       underground: game.underground ? game.underground.name : null,
+      system: w.systemId,
+      sectorTime: game.sector ? game.sector.time : 0,
       nav: game.navTarget?.name ?? null,
       pads: w.pads.map(pd => ({ name: pd.name, kind: pd.kind, body: pd.body.name, alive: pd.alive, pop: pd.population, stock: pd.stock, hp: pd.enemyHealth, angle: pd.angle, height: pd.height })),
     };

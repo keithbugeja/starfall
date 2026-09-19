@@ -44,6 +44,7 @@ export function createStation(w: World, spec: StationSpec): Station {
     orePrice: 30,
     salvagePrice: 45,
     upgrades: [],
+    market: null,
     siege: 0,
     defenceTimer: 0,
     discovered: false,
