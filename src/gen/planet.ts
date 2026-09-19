@@ -980,7 +980,9 @@ export function dressPlanet(w: World, geo: Geography, names: Namer): void {
   recomputeMaxRadius(b);
 
   // ---- what is inside
-  const ration: Record<string, number> = role === 'inner' ? { gun: 1, live: 1, dead: 1, signal: 1 } : { gun: 1, live: 1, dead: 1, signal: 1 };
+  // gun positions are the Tide's; a world in a system it has not reached has none, awake or dormant
+  const tide = w.machinePresence > 0 ? 1 : 0;
+  const ration: Record<string, number> = { gun: tide, live: 1, dead: tide, signal: 1 };
   const nets = geo.networks.slice().sort((p, q) => q.chambers.length - p.chambers.length);
   for (const net of nets) dressNetwork(w, ctx, net, names, ration);
 

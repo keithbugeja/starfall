@@ -97,7 +97,7 @@ export function icosphere(level: number): { verts: V3[]; faces: number[][] } {
   return { verts, faces };
 }
 
-export function buildStarMesh(radius: number, seed: number): MeshData {
+export function buildStarMesh(radius: number, seed: number, glow: number[] = [1.9, 1.35, 0.55]): MeshData {
   const mb = new MeshBuilder();
   const { verts, faces } = icosphere(2);
   const rng = new Rng(seed);
@@ -105,7 +105,7 @@ export function buildStarMesh(radius: number, seed: number): MeshData {
     const v = f.map(i => verts[i].map(x => x * radius));
     const k = 0.85 + rng.next() * 0.35;
     // HDR-ish emissive: bright core colour
-    triOut(mb, v[0], v[1], v[2], [1.9 * k, 1.35 * k, 0.55 * k]);
+    triOut(mb, v[0], v[1], v[2], [glow[0] * k, glow[1] * k, glow[2] * k]);
   }
   return mb.build();
 }

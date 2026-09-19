@@ -164,7 +164,7 @@ export class Game {
     this.caveMeshes.clear(); this.voidMeshes.clear(); this.slabMeshes.clear();
     this.underground = null;
     for (const b of this.world.bodies) {
-      if (b.kind === 'star') this.starMesh = this.meshes.create(buildStarMesh(b.radius, b.seed), 1);
+      if (b.kind === 'star') this.starMesh = this.meshes.create(buildStarMesh(b.radius, b.seed, b.palette.glow), 1);
       else this.planetMeshes.set(b.id, this.meshes.create(buildPlanetMesh(b), 1));
       this.buildUnderground(b);
     }
