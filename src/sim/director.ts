@@ -503,7 +503,7 @@ function updateEvents(w: World, dt: number): void {
         if (f.alive) e.pos = { x: f.pos.x, y: f.pos.y };
         const attackers = alive.filter(s => s.faction === 'enemy');
         // the escort earns the fee: the Kestrel flew with the freighter, or shot one of its attackers
-        if (f.alive && dist(f.pos, pl.pos) < 300) e.data.escorted = true;
+        if (f.alive && !pl.docked && attackers.length > 0 && dist(f.pos, pl.pos) < 300) e.data.escorted = true;
         const helped = e.data.escorted === true || e.ships.some(s => !s.alive && s.faction === 'enemy' && s.lastHitBy === 'player');
         if (!f.alive && !f.docked) resolve(w, e, false, `THE FREIGHTER IS GONE. SALVAGE WHAT YOU CAN.`);
         else if (f.docked) { if (!helped) e.reward = 0; resolve(w, e, true, helped ? `FREIGHTER MADE IT IN. THANK YOU, KESTREL.` : `FREIGHTER MADE IT IN ON ITS OWN.`); }

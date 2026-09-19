@@ -367,10 +367,11 @@ EXPANSION.md's smallest slice, built to see whether the larger structure improve
   and refuels at the harbour for money rather than free at a mine): the opening debris is five to
   eight pieces, 195 to 297 credits, in hand by 1.5 to 3.5 minutes on every seed tried; a home-world
   mine run is seven or eight ore, 180 to 217 at the harbour, about a minute and a half a cycle; a
-  peaceful pilot reaches 900 after the debris and two or three mine runs, 8 to 11 minutes without
-  deaths (seed 7: 11.0 minutes with one death; seed 3: 4.9 minutes, the opening raid repelled for
-  300 and a wasp rammed for 90; seed 11: 867 credits at 9.4 minutes with one death). A death costs
-  the hold. The pilot's deaths came from the rubble ring 50 units below the harbour, the Slipway
+  peaceful pilot reaches 900 after the debris and two or three mine runs; no death-free run was
+  flown, so the 8 to 11 minutes is inferred by adding back the hold each death cost. The runs as
+  flown: seed 7, 11.0 minutes with one death; seed 3, 4.9 minutes, the opening raid repelled for
+  300 and a wasp rammed for 90; seed 5, 14.7 minutes with five deaths; seed 11, 867 credits at 9.4
+  minutes with one death. A death costs the hold. The pilot's deaths came from the rubble ring 50 units below the harbour, the Slipway
   sweeping every home-world approach column at 14 units a second every minute, flares in the open,
   and wasps it would not fight; a human sees all four.
 - **What is ledgered and what is not.** Destroyed bases and cores (and their machinery), lost pads,
