@@ -1,6 +1,6 @@
 // The sector: generated systems are sane, the jump carries the player and leaves a ledger, and a run survives being saved.
 import { describe, expect, it } from 'vitest';
-import { createSector, instantiate, jumpTo, serializeSector, deserializeSector, restoreSector } from '../src/sector/sector';
+import { arrivalPoint, createSector, instantiate, jumpTo, serializeSector, deserializeSector, restoreSector } from '../src/sector/sector';
 import { checkDrive, consumeJump, updateDrive, DRIVE_ARRIVAL_SPEED, DRIVE_GRAVITY_LIMIT } from '../src/sim/drive';
 import { applyUpgrades } from '../src/sim/upgrades';
 import { note } from '../src/sim/journal';
@@ -105,6 +105,10 @@ describe('the jump', () => {
     let done = false;
     for (let i = 0; i < 120 * 12 && !done; i++) { stepWorld(w, c, SIM_DT, { flight: true, fireSecondary: false, director: false, nearestEnemy: null }); done = updateDrive(w, sector, p, true, SIM_DT); }
     expect(done).toBe(true);
+    // the guns arrive hot, not jammed
+    expect(p.heat).toBeGreaterThan(0.7);
+    expect(p.heat).toBeLessThan(1);
+    expect(p.overheated).toBe(false);
     const chk = checkDrive(w, sector, p);
     expect(chk.ok).toBe(true);
     const fuelBefore = p.fuel;
@@ -192,7 +196,31 @@ describe('persistence', () => {
     expect(rw.pads.find(q => q.name === base.name)!.alive).toBe(false);
     expect(rw.player.docked && rw.player.docked.name).toBe(w.stations[0].name);
     expect(deserializeSector('nonsense')).toBeNull();
+    // the live sector was not touched by the save
+    expect(sector.ledgers.home.visited).toBe(false);
   });
+
+  it('a save keeps the clock: the worlds are where time left them', () => {
+    const sector = createSector(hashString('save-2'), 'SAVE');
+    const w = instantiate(sector, 'home');
+    const c = emptyControls();
+    w.player.docked = null;
+    for (let i = 0; i < 120 * 60; i++) stepWorld(w, c, SIM_DT, { flight: true, fireSecondary: false, director: false, nearestEnemy: null });
+    const planet = w.bodies.find(b => b.kind === 'planet')!;
+    const at = { x: planet.pos.x, y: planet.pos.y };
+    const text = serializeSector(sector, w, null);
+    const rw = restoreSector(deserializeSector(text)!);
+    const planet2 = rw.bodies.find(b => b.name === planet.name)!;
+    expect(Math.hypot(planet2.pos.x - at.x, planet2.pos.y - at.y)).toBeLessThan(3);
+    // and the arrival point is clear of every well, home and away
+    for (const id of ['home', 'ember']) {
+      const s2 = createSector(hashString('save-2'), 'SAVE');
+      const w2 = instantiate(s2, id);
+      const from = s2.systems.find(r => r.id !== id)!, to = s2.systems.find(r => r.id === id)!;
+      const ap = arrivalPoint(w2, from, to, 30);
+      for (const b of w2.bodies) if (b.kind !== 'star') expect(Math.hypot(ap.x - b.pos.x, ap.y - b.pos.y)).toBeGreaterThan(b.soi);
+    }
+  }, 60000);
 });
 
 describe('markets', () => {

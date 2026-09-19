@@ -241,16 +241,19 @@ export function arrivalPoint(w: World, from: SystemRecipe, to: SystemRecipe, spe
   const dx = from.x - to.x, dy = from.y - to.y;
   const l = Math.hypot(dx, dy) || 1;
   const ux = dx / l, uy = dy / l;
-  let r = w.systemRadius * 0.97;
-  // never inside anything: step out until clear
-  for (let t = 0; t < 20; t++) {
-    const x = w.star.pos.x + ux * r, y = w.star.pos.y + uy * r;
-    const clear = w.bodies.every(b => Math.hypot(x - b.pos.x, y - b.pos.y) > b.maxRadius + 40);
-    if (clear) break;
-    r += 60;
+  const r0 = w.systemRadius * 0.97;
+  // never inside anything's well: try the line first, then a little to either side, then further out
+  let best = { x: w.star.pos.x + ux * r0, y: w.star.pos.y + uy * r0 };
+  outer: for (let t = 0; t < 8; t++) {
+    const r = r0 + t * 80;
+    for (const side of [0, 1, -1, 2, -2]) {
+      const a = Math.atan2(uy, ux) + side * 0.06;
+      const x = w.star.pos.x + Math.cos(a) * r, y = w.star.pos.y + Math.sin(a) * r;
+      const clear = w.bodies.every(b => b.kind === 'star' || Math.hypot(x - b.pos.x, y - b.pos.y) > b.soi + 60);
+      if (clear) { best = { x, y }; break outer; }
+    }
   }
-  const x = w.star.pos.x + ux * r, y = w.star.pos.y + uy * r;
-  return { x, y, vx: -ux * speed, vy: -uy * speed, angle: Math.atan2(-uy, -ux) };
+  return { x: best.x, y: best.y, vx: -ux * speed, vy: -uy * speed, angle: Math.atan2(-uy, -ux) };
 }
 
 /** Leave the current world and enter another: the whole transition in one place. */
@@ -274,8 +277,9 @@ interface SavedSector { version: number; sector: Sector; }
 
 /** Everything the run is, as text: the sector, its ledgers and the player. The world is rebuilt from it. */
 export function serializeSector(sector: Sector, w: World | null, docked: string | null): string {
-  const s: Sector = { ...sector, player: w ? extractPlayer(w) : sector.player, where: { docked } };
-  if (w) { writeLedger(w, s); s.ledgers = { ...sector.ledgers }; }
+  // a copy: the save's clock includes the time lived in the current world, and its ledgers are its own
+  const s: Sector = { ...sector, ledgers: JSON.parse(JSON.stringify(sector.ledgers)) as Record<string, Ledger>, player: w ? extractPlayer(w) : sector.player, where: { docked } };
+  if (w) { s.time = sector.time + w.time; writeLedger(w, s); }
   const saved: SavedSector = { version: SECTOR_VERSION, sector: s };
   return JSON.stringify(saved);
 }

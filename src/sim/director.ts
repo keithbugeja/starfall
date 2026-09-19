@@ -122,6 +122,8 @@ function directorStep(w: World, dt: number, d: DirectorState): void {
     else if (active < 3) spawnEvent(w, d);
   }
   d.flareCooldown -= dt;
+  // a star with a short flare cadence flares on that cadence; the home star's flares stay in the event lottery
+  if (w.flareRate >= 2 && d.flareCooldown <= 0 && !w.flare.active && !w.flare.warned) spawnEventOfKind(w, d, 'flare');
   updateEvents(w, dt);
   updateFlare(w, dt);
 

@@ -13,7 +13,7 @@ export const DRIVE_GRAVITY_LIMIT = 0.02;   // units per second squared: outside 
 export const DRIVE_BEARING_TOLERANCE = 0.12; // radians of nose error the drive accepts
 export const DRIVE_CHARGE_SECONDS = 8;      // the short drive
 export const DRIVE_RANGE = 5;               // chart units the short drive reaches on a full tank at stock mass
-export const DRIVE_HEAT_PER_SECOND = 0.45;  // heat added while charging: well above what the ship sheds (0.35 a second), so a jump leaves the guns hot but short of a jam
+export const DRIVE_HEAT_AT_JUMP = 0.85;     // the charge holds the guns at least this hot, in sun or shade, and never jams them
 export const DRIVE_ARRIVAL_SPEED = 30;      // inward speed on arrival
 
 export interface DriveCheck {
@@ -74,7 +74,8 @@ export function updateDrive(w: World, sector: Sector, s: Ship, engage: boolean, 
   }
   if (!d.charging) { d.charging = true; d.charge = 0; sfx(w, 'ui', s.pos, 0.4); }
   d.charge = Math.min(1, d.charge + dt / DRIVE_CHARGE_SECONDS);
-  s.heat = Math.min(1.2, s.heat + DRIVE_HEAT_PER_SECOND * dt);
+  // the charge is heat the ship cannot shed: the guns arrive hot, short of a jam, whatever the shade
+  s.heat = Math.max(s.heat, d.charge * DRIVE_HEAT_AT_JUMP);
   return d.charge >= 1;
 }
 

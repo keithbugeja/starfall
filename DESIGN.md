@@ -340,7 +340,7 @@ EXPANSION.md's smallest slice, built to see whether the larger structure improve
 - **The jump** is four gates and a charge: gravity under 0.02 (outside every planet's sphere of
   influence, clear of the star's near well), nose within seven degrees of the chart bearing, fuel for
   five per chart unit times the mass multiplier, the cable in; eight seconds of charge that add a
-  signature of about 3 (a ping is 3) and heat faster than the ship sheds it. Arrival is at 97% of the
+  signature of about 3 (a ping is 3) and hold the guns at 0.85 heat, short of a jam, in sun or shade. Arrival is at 97% of the
   destination's system radius on the line from the origin star, 30 units a second inward.
 - **Measured (seed 2024).** From the harbour the well gate opens after 2 s of boost: the harbour sits
   at 3.4 radii and the sphere of influence ends at 5, so the climb is short; from a pad it is the
