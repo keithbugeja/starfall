@@ -11,6 +11,7 @@ import { emptyControls } from '../src/engine/input';
 import { stepWorld } from '../src/sim/step';
 import { SIM_DT, type World } from '../src/sim/world';
 import { hashString } from '../src/engine/math';
+import { bidOf, buyFrom, priceOf, relaxMarket, sellTo } from '../src/sim/market';
 
 const SEEDS = Array.from({ length: 40 }, (_, i) => hashString('sector-' + i));
 
@@ -191,5 +192,49 @@ describe('persistence', () => {
     expect(rw.pads.find(q => q.name === base.name)!.alive).toBe(false);
     expect(rw.player.docked && rw.player.docked.name).toBe(w.stations[0].name);
     expect(deserializeSector('nonsense')).toBeNull();
+  });
+});
+
+describe('markets', () => {
+  it('prices follow stock, selling lowers them, buying raises them, and time relaxes them', () => {
+    const sector = createSector(hashString('market-1'), 'MKT');
+    const w = instantiate(sector, 'ember');
+    const port = w.stations[0];
+    expect(port.market).not.toBeNull();
+    const ore = port.market!.ore, salvage = port.market!.salvage;
+    const p0 = priceOf(ore);
+    expect(p0).toBe(18);
+    expect(priceOf(salvage)).toBe(70);
+    // buying ore raises its price; selling salvage lowers what they pay
+    const { bought, cost } = buyFrom(port, 'ore', 10, 10000);
+    expect(bought).toBe(10);
+    expect(cost).toBeGreaterThanOrEqual(10 * p0);
+    expect(priceOf(ore)).toBeGreaterThan(p0);
+    const bid0 = bidOf(salvage);
+    const paid = sellTo(port, 'salvage', 6);
+    expect(paid).toBeGreaterThan(0);
+    expect(bidOf(salvage)).toBeLessThan(bid0);
+    // ten minutes away and the stock is mostly back
+    const s1 = ore.stock;
+    relaxMarket(port, 600);
+    expect(Math.abs(ore.stock - ore.baseStock)).toBeLessThan(Math.abs(s1 - ore.baseStock));
+    // the home refinery pays more for ore than the port asks: the trip has a reason
+    const hw = instantiate(createSector(hashString('market-1'), 'MKT'), 'home');
+    const refinery = hw.stations.find(st => st.kind === 'refinery')!;
+    expect(bidOf(refinery.market!.ore)).toBeGreaterThan(priceOf(ore) + 5);
+  });
+
+  it('a station stock crosses a jump in the ledger', () => {
+    const sector = createSector(hashString('market-2'), 'MKT');
+    const w = instantiate(sector, 'ember');
+    const port = w.stations[0];
+    sellTo(port, 'salvage', 5);
+    const stockAfter = port.market!.salvage.stock;
+    w.player.docked = null;
+    const nw = jumpTo(sector, w, 'home', DRIVE_ARRIVAL_SPEED);
+    const back = jumpTo(sector, nw, 'ember', DRIVE_ARRIVAL_SPEED);
+    const port2 = back.stations[0];
+    expect(port2.market!.salvage.stock).toBeGreaterThan(port2.market!.salvage.baseStock);
+    expect(port2.market!.salvage.stock).toBeLessThanOrEqual(stockAfter);
   });
 });

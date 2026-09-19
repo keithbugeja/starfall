@@ -14,7 +14,7 @@ import { poweredAt, socketWorld } from '../sim/power';
 import { structureNormal, structurePos } from '../sim/structures';
 import { signature, sunlight } from '../sim/sense';
 import { inShadow } from '../sim/physics';
-import { createSector, instantiate, jumpTo, recipeOf, type Sector } from '../sector/sector';
+import { createSector, deserializeSector, instantiate, jumpTo, recipeOf, restoreSector, serializeSector, type Sector } from '../sector/sector';
 import { checkDrive, consumeJump, DRIVE_ARRIVAL_SPEED, updateDrive } from '../sim/drive';
 import { maxTerrainRadius, padWorldAngle, padWorldPos, terrainNormalAt, terrainRadiusAt, type Body } from '../sim/bodies';
 import { gravityAt, LAND_VN, predictTrajectory, type Trajectory } from '../sim/physics';
@@ -90,6 +90,8 @@ export class Game {
   journalReturn: GameMode = 'flight';
   mapZoom = 1;
   mapPan: V2 = { x: 0, y: 0 };
+  chartView = false;
+  chartNote = '';
   navTarget: NavTarget | null = null;
   seedText = 'STARFALL';
   seedDirty = false;
@@ -315,8 +317,42 @@ export class Game {
     this.onArrived();
   }
 
-  /** Hook for what happens after a jump (saving the run, once there is a save). */
-  onArrived(): void { /* milestone five */ }
+  /** After a jump: the run is saved where it stands. */
+  onArrived(): void { this.saveRun(); }
+
+  /** The run as text in local storage: the sector, its ledgers, the player, and where they are. */
+  saveRun(): void {
+    if (!this.sector || this.mode === 'title') return;
+    const p = this.world.player;
+    try { localStorage.setItem('starfall.run', serializeSector(this.sector, this.world, p.docked ? p.docked.name : null)); } catch { /* ignore */ }
+  }
+
+  hasSavedRun(): { name: string; system: string; credits: number } | null {
+    try {
+      const text = localStorage.getItem('starfall.run');
+      if (!text) return null;
+      const s = deserializeSector(text);
+      if (!s || !s.player) return null;
+      const r = s.systems.find(x => x.id === s.current);
+      return { name: s.seedName, system: r ? (r.name || r.tag) : s.current, credits: s.player.credits };
+    } catch { return null; }
+  }
+
+  /** Continue the saved run: rebuild its current system and put the player back. */
+  loadRun(): boolean {
+    let s: Sector | null = null;
+    try { const text = localStorage.getItem('starfall.run'); s = text ? deserializeSector(text) : null; } catch { s = null; }
+    if (!s) return false;
+    this.sector = s;
+    this.seedText = s.seedName;
+    const w = restoreSector(s);
+    this.loadWorld(w);
+    this.startRun();
+    this.mode = w.player.docked ? 'docked' : 'flight';
+    this.menuIndex = 0;
+    sfx(w, 'dock');
+    return true;
+  }
 
   /** Compose the player's controls including mouse steering. */
   playerControls(): Controls {
@@ -351,7 +387,7 @@ export class Game {
     const fire2 = this.fireSecondary;
     this.fireSecondary = false;
     const docked = stepWorld(w, c, dt, { flight: this.mode === 'flight', fireSecondary: fire2, director: this.mode !== 'title', nearestEnemy: nearestEnemyShip(w, 400) });
-    if (docked) { this.mode = 'docked'; this.menuIndex = 0; }
+    if (docked) { this.mode = 'docked'; this.menuIndex = 0; this.saveRun(); }
     // the jump drive: held, it charges through its gates; complete, it takes the ship to another star
     const engage = this.harnessCharge || (this.mode === 'flight' && !this.input.override && (this.input.down('KeyG') || this.input.gpButton(4) > 0.5));
     if (p.alive && updateDrive(w, this.sector, p, engage, dt)) { this.performJump(); return; }

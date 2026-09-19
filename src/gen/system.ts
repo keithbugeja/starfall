@@ -11,6 +11,7 @@ import { createEmptyWorld, createShip, type World } from '../sim/world';
 import { makeNamer } from './names';
 import { spawnAiShip } from '../sim/ai';
 import { authorSlices } from '../sim/slices';
+import { makeMarket } from '../sim/market';
 import { markOpenings } from '../sim/walls';
 import { dressPlanet, GEOGRAPHY, padAngleFor, PLACED_ROCK, sculptPlanet, type Geography } from './planet';
 
@@ -196,7 +197,9 @@ export function generateSystem(seed: number, seedName: string): World {
     return cands.length ? cands[0] : Math.max(...moons.map(m => m.orbit!.radius + m.maxRadius + 95), minR);
   };
   const harbour = createStation(w, { name: names.station('harbour', home.body.name), kind: 'harbour', parent: home.body, orbitRadius: clearOrbit(home.body, home.body.radius * 3.4), period: 900 + rng.int(300), phase: rng.next() * TAU, radius: 14 });
-  harbour.upgrades = ['retro', 'strafe', 'struts', 'tank', 'armour', 'scatter', 'mass', 'seeker', 'sensors', 'cargo'];
+  harbour.upgrades = ['retro', 'strafe', 'struts', 'tank', 'armour', 'scatter', 'mass', 'seeker', 'sensors', 'cargo', 'drive'];
+  // the harbour takes ore and salvage at fair prices; the refinery pays for ore and sells the parts it makes; research pays for parts
+  harbour.market = makeMarket({ ore: { base: 30, stock: 40 }, salvage: { base: 45, stock: 20 } });
   // start the harbour on the far side from every moon of its world so the first launch has room
   {
     const moons = home.moons;
@@ -218,9 +221,11 @@ export function generateSystem(seed: number, seedName: string): World {
   const refinery = createStation(w, { name: names.station('refinery', refineryHost.name), kind: 'refinery', parent: refineryHost, orbitRadius: clearOrbit(refineryHost, refineryHost.radius * (refineryHost.kind === 'gas' ? 2.4 : 3.2)), period: 1000 + rng.int(300), phase: rng.next() * TAU, radius: 12, spin: 0.27 });
   refinery.upgrades = ['engine', 'tank', 'cargo', 'armour', 'retro', 'mass', 'heatshield', 'tractor', 'struts'];
   refinery.orePrice = 42; refinery.salvagePrice = 40;
+  refinery.market = makeMarket({ ore: { base: 42, stock: 30 }, salvage: { base: 28, stock: 30, buys: false, sells: true } });
   const research = createStation(w, { name: names.station('research', mid.body.name), kind: 'research', parent: mid.body, orbitRadius: clearOrbit(mid.body, mid.body.radius * 4.0), period: 1100 + rng.int(300), phase: rng.next() * TAU, radius: 11, spin: -0.22 });
   research.upgrades = ['gravdamp', 'sensors', 'rail', 'tractor', 'heatshield', 'strafe', 'seeker'];
   research.salvagePrice = 60;
+  research.market = makeMarket({ salvage: { base: 60, stock: 10 } });
   w.respawnStation = harbour;
 
   // ---------------- THE SLIPWAY: a dead cruiser in a low orbit of the home world, fuel still in its bunker

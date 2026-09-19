@@ -4,6 +4,9 @@ import { clamp, TAU, type V2 } from '../engine/math';
 import type { Pad } from '../sim/bodies';
 import { applyUpgrades, installWeapon, UPGRADES, upgradeById } from '../sim/upgrades';
 import { makeWeapon, sfx, type Station, type WeaponKind } from '../sim/world';
+import { bidOf, buyFrom, GOODS, priceOf, recordPrices, sellTo } from '../sim/market';
+import { DRIVE_RANGE, hasDrive, jumpFuel } from '../sim/drive';
+import { chartDistance, recipeOf } from '../sector/sector';
 import type { Game } from './game';
 import { C, eventColor, navPos, type NavTarget } from './hud';
 import { padColor } from './game';
@@ -24,6 +27,9 @@ const CONTROLS: [string, string][] = [
   ['M', 'SYSTEM MAP / SET COURSE'],
   ['TAB', 'CYCLE COURSE: EVENTS, STATIONS'],
   ['J', 'JOURNAL: WHAT YOU HAVE SEEN, IN YOUR OWN WORDS'],
+  ['V (IN THE MAP)', 'SECTOR CHART: PICK A STAR TO JUMP TO'],
+  ['G (HOLD)', 'CHARGE THE JUMP DRIVE: CLEAR OF EVERY WELL, NOSE ON THE BEARING'],
+  ['F2 (TITLE)', 'CONTINUE THE SAVED RUN (SAVED AT EVERY DOCK AND ARRIVAL)'],
   ['H', 'THIS SCREEN'],
   ['0', 'MUTE'],
   ['ESC', 'PAUSE / BACK'],
@@ -62,6 +68,8 @@ export function drawTitle(g: Game): void {
   drawText(H, `SEED  ${g.seedText}_`, W / 2, Hh * 0.52 + 30 * s, 11 * s, C.amber[0], C.amber[1], C.amber[2], 0.85, 'center');
   drawText(H, 'TYPE TO CHANGE THE SEED  ·  H FOR CONTROLS', W / 2, Hh * 0.52 + 46 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.85, 'center');
   if (g.highScore > 0) drawText(H, `HIGH SCORE ${String(g.highScore).padStart(7, '0')}`, W / 2, Hh * 0.52 + 66 * s, 11 * s, C.green[0], C.green[1], C.green[2], 0.8, 'center');
+  const saved = g.hasSavedRun();
+  if (saved) drawText(H, `F2  CONTINUE THE SAVED RUN  ·  ${saved.name}  ·  AT ${saved.system}  ·  ${saved.credits} CR`, W / 2, Hh * 0.52 + 88 * s, 10 * s, C.cyan[0], C.cyan[1], C.cyan[2], 0.85, 'center');
 
   // compact controls at the bottom
   const rows = ['ROTATE A/D  ·  THRUST W  ·  BOOST SHIFT  ·  FIRE SPACE  ·  MAP M  ·  MOUSE STEERS', 'FLY WELL. GRAVITY IS NOT YOUR ENEMY. IT IS THE GAME.'];
@@ -73,6 +81,7 @@ export function drawTitle(g: Game): void {
   const inp = g.input;
   if (inp.wasPressed('KeyH') || inp.wasPressed('F1')) { g.helpReturn = 'title'; g.mode = 'help'; return; }
   if (inp.wasPressed('Enter') || inp.wasPressed('NumpadEnter') || inp.wasPressed('GP9') || inp.wasPressed('GP0')) { g.beginPatrol(); return; }
+  if (inp.wasPressed('F2')) { if (!g.loadRun()) sfx(w, 'deny'); return; }
   for (const ch of inp.typed) {
     if (/^[a-gi-zA-GI-Z0-9 \-]$/.test(ch) && g.seedText.length < 16) { g.seedText += ch.toUpperCase(); g.seedDirty = true; }
   }
@@ -137,8 +146,32 @@ export function drawDocked(g: Game): void {
       const n = Math.min(need, Math.floor(w.credits / 40)); if (n <= 0) { sfx(w, 'deny'); return; } w.credits -= n * 40; p.secondary!.ammo += n; sfx(w, 'buy');
     } });
   }
-  rows.push({ label: `SELL ORE (${p.cargo.ore})`, right: `${st.orePrice} CR EACH`, enabled: p.cargo.ore > 0, action: () => { w.credits += p.cargo.ore * st.orePrice; w.score += p.cargo.ore * 20; w.stats.oreSold += p.cargo.ore; p.cargo.ore = 0; sfx(w, 'buy'); } });
-  rows.push({ label: `SELL SALVAGE (${p.cargo.salvage})`, right: `${st.salvagePrice} CR EACH`, enabled: p.cargo.salvage > 0, action: () => { w.credits += p.cargo.salvage * st.salvagePrice; w.score += p.cargo.salvage * 30; w.stats.salvageSold += p.cargo.salvage; p.cargo.salvage = 0; sfx(w, 'buy'); } });
+  if (st.market) {
+    // what this station trades, at what its stock makes the price
+    recordPrices(w, st, g.sector.time + w.time);
+    for (const good of GOODS) {
+      const e = st.market[good];
+      if (!e) continue;
+      const have = p.cargo[good];
+      const label = good.toUpperCase();
+      if (e.buys) rows.push({ label: `SELL ${label} (${have})`, right: `${bidOf(e)} CR EACH`, enabled: have > 0, desc: `THEY HOLD ${e.stock}. SELLING LOWERS WHAT THEY PAY.`, action: () => {
+        const paid = sellTo(st, good, have); w.credits += paid; w.score += have * (good === 'ore' ? 20 : 30);
+        if (good === 'ore') w.stats.oreSold += have; else w.stats.salvageSold += have;
+        p.cargo[good] = 0; sfx(w, 'buy');
+      } });
+      if (e.sells) {
+        const room = p.cargo.capacity - p.cargo.ore - p.cargo.salvage - p.cargo.pods;
+        rows.push({ label: `BUY ${label} (${e.stock} HELD)`, right: `${priceOf(e)} CR EACH`, enabled: room > 0 && e.stock > 0 && w.credits >= priceOf(e), desc: `CARGO ROOM ${room}. BUYING RAISES THE PRICE.`, action: () => {
+          const { bought, cost } = buyFrom(st, good, Math.min(room, 4), w.credits);
+          if (bought <= 0) { sfx(w, 'deny'); return; }
+          w.credits -= cost; p.cargo[good] += bought; sfx(w, 'buy');
+        } });
+      }
+    }
+  } else {
+    rows.push({ label: `SELL ORE (${p.cargo.ore})`, right: `${st.orePrice} CR EACH`, enabled: p.cargo.ore > 0, action: () => { w.credits += p.cargo.ore * st.orePrice; w.score += p.cargo.ore * 20; w.stats.oreSold += p.cargo.ore; p.cargo.ore = 0; sfx(w, 'buy'); } });
+    rows.push({ label: `SELL SALVAGE (${p.cargo.salvage})`, right: `${st.salvagePrice} CR EACH`, enabled: p.cargo.salvage > 0, action: () => { w.credits += p.cargo.salvage * st.salvagePrice; w.score += p.cargo.salvage * 30; w.stats.salvageSold += p.cargo.salvage; p.cargo.salvage = 0; sfx(w, 'buy'); } });
+  }
   if (p.ownedWeapons.length > 1) {
     for (const wk of p.ownedWeapons) {
       const active = p.weapon.kind === wk;
@@ -228,6 +261,8 @@ export function drawMap(g: Game): void {
   const p = w.player;
   const inp = g.input;
   dim(g, 0.85);
+  if (inp.wasPressed('KeyV')) { g.chartView = !g.chartView; sfx(w, 'ui'); inp.consume('KeyV'); }
+  if (g.chartView) { drawChart(g); return; }
   let maxR = 300;
   for (const b of w.bodies) if (b.orbit) { const r = (b.orbit.parent.orbit ? b.orbit.parent.orbit.radius : 0) + b.orbit.radius + b.radius; if (r > maxR) maxR = r; }
   const scale = Math.min(W, Hh) * 0.46 / maxR * g.mapZoom;
@@ -345,7 +380,7 @@ export function drawMap(g: Game): void {
   if (!active.length) drawText(H, 'QUIET. FOR NOW.', rx, ey, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.8, 'right');
   const colonies = w.pads.filter(pd => pd.kind === 'colony');
   drawText(H, `COLONIES ${colonies.filter(pd => pd.alive).length}/${colonies.length}  ·  PODS LOST ${w.lost}  ·  RESCUED ${w.rescued}  ·  BASES DESTROYED ${w.stats.basesDestroyed}`, rx, Hh - 46 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.85, 'right');
-  drawText(H, 'MOUSE: PICK  ·  WHEEL: ZOOM  ·  ARROWS: PAN  ·  1-5: COURSE TO SITUATION  ·  C: CLEAR COURSE  ·  M / ESC: CLOSE', W / 2, Hh - 24 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.85, 'center');
+  drawText(H, 'MOUSE: PICK  ·  WHEEL: ZOOM  ·  ARROWS: PAN  ·  1-5: COURSE TO SITUATION  ·  C: CLEAR COURSE  ·  V: SECTOR CHART  ·  M / ESC: CLOSE', W / 2, Hh - 24 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.85, 'center');
   // controls
   if (inp.wheel !== 0) g.mapZoom = clamp(g.mapZoom * (inp.wheel > 0 ? 0.8 : 1.25), 0.6, 6);
   const pan = 40 / scale;
@@ -469,3 +504,77 @@ export function drawJournal(g: Game): void {
 export function padLabel(p: Pad): string { return p.name; }
 export function stationLabel(s: Station): string { return s.name; }
 export type { V2 };
+
+/** The sector chart: the stars, which one you are at, how far the drive reaches, and what prices you last saw. */
+export function drawChart(g: Game): void {
+  const H = g.hudLines;
+  const W = g.camera.viewportW, Hh = g.camera.viewportH;
+  const s = g.dpr;
+  const w = g.world;
+  const p = w.player;
+  const inp = g.input;
+  const sector = g.sector;
+  const here = recipeOf(sector, w.systemId);
+  // fit every star with a margin
+  let ext = 1;
+  for (const r of sector.systems) ext = Math.max(ext, Math.abs(r.x), Math.abs(r.y));
+  const scale = Math.min(W, Hh) * 0.34 / Math.max(ext, DRIVE_RANGE * 0.6);
+  const cx = W / 2, cy = Hh / 2;
+  const toS = (x: number, y: number): [number, number] => [cx + x * scale, cy - y * scale];
+  const now = sector.time + w.time;
+  // the drive's reach from here
+  const [hx, hy] = toS(here.x, here.y);
+  H.circle2(hx, hy, DRIVE_RANGE * scale, 64, C.cyan[0], C.cyan[1], C.cyan[2], hasDrive(p) ? 0.25 : 0.1, 1);
+  for (let k = 1; k <= 4; k++) H.circle2(hx, hy, k * scale, 48, C.dim[0], C.dim[1], C.dim[2], 0.12, 1);
+  const mx = inp.mouseX * s, my = inp.mouseY * s;
+  let pick: typeof here | null = null, pd = 26 * s;
+  for (const r of sector.systems) {
+    const [x, y] = toS(r.x, r.y);
+    const led = sector.ledgers[r.id];
+    const known = r.kind === 'home' || (led && led.visited);
+    const col = r.starClass === 'red-dwarf' ? [1, 0.45, 0.3] : C.amber;
+    const rad = (r.starClass === 'red-dwarf' ? 5 : 7) * s;
+    H.circle2(x, y, rad, 16, col[0], col[1], col[2], 0.95, 1.5);
+    if (r.id === w.systemId) H.circle2(x, y, rad + 6 * s, 20, 1, 1, 1, 0.8, 1.2);
+    const name = known && r.name ? r.name : r.tag;
+    drawText(H, name, x, y + rad + 6 * s, 10 * s, col[0], col[1], col[2], 0.9, 'center');
+    drawText(H, `${r.tag}  ·  ${r.danger}`, x, y + rad + 19 * s, 7 * s, C.dim[0], C.dim[1], C.dim[2], 0.85, 'center');
+    // what this system paid, the last time anyone looked
+    const seen = w.pricesSeen.filter(q => q.system === r.id);
+    const byStation = new Map<string, string[]>();
+    for (const q of seen) { const age = Math.max(0, now - q.time); const list = byStation.get(q.station) ?? []; list.push(`${q.good.toUpperCase()} ${q.price}`); byStation.set(q.station, list); if (!byStation.has(q.station + '#age')) byStation.set(q.station + '#age', [`${Math.floor(age / 60)} MIN AGO`]); }
+    let ly = y + rad + 32 * s;
+    for (const [st, list] of byStation) {
+      if (st.endsWith('#age')) continue;
+      const age = byStation.get(st + '#age')?.[0] ?? '';
+      drawText(H, `${st}: ${list.join('  ')}  (${age})`, x, ly, 7 * s, C.green[0], C.green[1], C.green[2], 0.8, 'center');
+      ly += 11 * s;
+    }
+    if (r.id !== w.systemId) { const d = Math.hypot(x - mx, y - my); if (d < pd) { pd = d; pick = r; } }
+  }
+  // the target, or the pick
+  const target = p.drive.target ? recipeOf(sector, p.drive.target) : null;
+  for (const r of [target, pick]) {
+    if (!r) continue;
+    const [x, y] = toS(r.x, r.y);
+    const d = chartDistance(here, r);
+    const fuel = jumpFuel(d, p);
+    const isT = r === target;
+    if (isT) { H.line2(x - 9 * s, y - 9 * s, x + 9 * s, y + 9 * s, 1, 1, 1, 0.9, 1.3); H.line2(x - 9 * s, y + 9 * s, x + 9 * s, y - 9 * s, 1, 1, 1, 0.9, 1.3); }
+    else H.circle2(x, y, 13 * s, 16, 1, 1, 1, 0.7, 1.2);
+    H.line2(hx, hy, x, y, 1, 1, 1, isT ? 0.35 : 0.2, 1);
+    const inRange = d <= DRIVE_RANGE;
+    drawText(H, `${d.toFixed(1)} CHART UNITS  ·  FUEL ${fuel}${inRange ? '' : '  ·  OUT OF RANGE'}${isT ? '  ·  DESTINATION' : '  ·  CLICK TO SET'}`, (hx + x) / 2, (hy + y) / 2 - 8 * s, 8 * s, inRange ? 1 : C.red[0], inRange ? 1 : C.red[1], inRange ? 1 : C.red[2], 0.9, 'center');
+  }
+  if (pick && ((inp.mousePressed & 1) !== 0 || inp.wasPressed('Enter'))) {
+    if (!hasDrive(p)) { sfx(w, 'deny'); g.chartNote = 'NO DRIVE FITTED. THE HARBOUR SELLS ONE.'; }
+    else { p.drive.target = pick.id; sfx(w, 'ui'); g.chartNote = `DESTINATION SET: ${pick.name || pick.tag}. CLEAR OF EVERY WELL, NOSE ON ITS BEARING, HOLD G.`; }
+  }
+  drawText(H, `SECTOR CHART  ·  ${here.name || here.tag}  ·  DRIVE ${hasDrive(p) ? `REACH ${DRIVE_RANGE} UNITS` : 'NOT FITTED'}  ·  FUEL ${p.fuel.toFixed(0)}/${p.fuelMax.toFixed(0)}`, 24 * s, 20 * s, 12 * s, C.cyan[0], C.cyan[1], C.cyan[2], 0.9);
+  const legend = ['A JUMP NEEDS: CLEAR OF EVERY WELL', 'THE NOSE ON THE BEARING', 'FUEL BY DISTANCE AND MASS', 'EIGHT SECONDS OF CHARGE, LOUD AND HOT', 'THE CABLE DROPS AT THE JUMP'];
+  legend.forEach((l, i) => drawText(H, l, 24 * s, 44 * s + i * 13 * s, 8 * s, C.dim[0], C.dim[1], C.dim[2], 0.85));
+  if (g.chartNote) drawText(H, g.chartNote, W / 2, Hh - 48 * s, 9 * s, C.amber[0], C.amber[1], C.amber[2], 0.9, 'center');
+  drawText(H, 'MOUSE: PICK A STAR  ·  ENTER / CLICK: SET DESTINATION  ·  C: CLEAR  ·  V: SYSTEM MAP  ·  M / ESC: CLOSE', W / 2, Hh - 24 * s, 9 * s, C.dim[0], C.dim[1], C.dim[2], 0.85, 'center');
+  if (inp.wasPressed('KeyC')) { p.drive.target = null; g.chartNote = ''; sfx(w, 'ui'); }
+  if (inp.wasPressed('KeyM') || inp.wasPressed('Escape') || inp.wasPressed('GP8') || inp.wasPressed('GP1')) g.mode = g.mapReturn;
+}

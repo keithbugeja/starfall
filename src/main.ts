@@ -14,6 +14,7 @@ import { padWorldPos } from './sim/bodies';
 import { poweredAt, socketWorld } from './sim/power';
 import { structurePos } from './sim/structures';
 import { checkDrive } from './sim/drive';
+import { bidOf, priceOf } from './sim/market';
 import { GEOGRAPHY, validatePlanet } from './gen/planet';
 import { canSense, losBlocker, signature, sunlight } from './sim/sense';
 import { createAsteroid, gravityAt, predictTrajectory, spawnPickup, type Trajectory } from './sim/physics';
@@ -107,6 +108,8 @@ const harness = {
   /** The jump drive from the test bench: fit it, aim it, hold it, read its gates. */
   drive(target: string | null): void { const p = game.world.player; if (!p.upgrades.includes('drive')) { p.upgrades.push('drive'); applyUpgrades(p); } p.drive.target = target; },
   charge(on: boolean): void { game.harnessCharge = on; },
+  prices(): unknown { return game.world.pricesSeen; },
+  market(name: string): unknown { const st = game.world.stations.find(s => s.name === name); return st && st.market ? Object.fromEntries(Object.entries(st.market).map(([g, e]) => [g, { stock: e.stock, price: priceOf(e), bid: bidOf(e), buys: e.buys, sells: e.sells }])) : null; },
   driveCheck(): unknown { return checkDrive(game.world, game.sector, game.world.player); },
   sector(): unknown { const s = game.sector; return { time: s.time, current: s.current, systems: s.systems.map(r => ({ id: r.id, name: r.name, tag: r.tag, trait: r.trait, x: r.x, y: r.y })), ledgers: s.ledgers }; },
   ping(): void { const p = game.world.player; emitPing(game.world, p.pos.x, p.pos.y, false, undefined, p); },

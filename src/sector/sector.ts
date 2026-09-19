@@ -10,6 +10,7 @@ import { generateSystem } from '../gen/system';
 import { generateFromRecipe } from '../gen/recipe';
 import { updateStations } from '../sim/stations';
 import { applyUpgrades } from '../sim/upgrades';
+import { relaxMarket } from '../sim/market';
 import { createShip, makeWeapon, type Cargo, type WeaponKind, type World } from '../sim/world';
 import type { JournalEntry } from '../sim/journal';
 
@@ -167,6 +168,7 @@ export function applyLedger(w: World, ledger: Ledger, sector: Sector): void {
     const stocks = ledger.stocks[st.name];
     if (!stocks || !st.market) continue;
     for (const [good, stock] of Object.entries(stocks)) if (st.market[good]) st.market[good].stock = stock;
+    relaxMarket(st, sector.time - ledger.leftAt);
   }
   // the authored arc keeps its cheap booleans; anything richer is a known compromise (see EXPANSION.md)
   const S = w.slices;

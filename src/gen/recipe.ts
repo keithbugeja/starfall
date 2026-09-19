@@ -14,6 +14,7 @@ import { markOpenings } from '../sim/walls';
 import { dressPlanet, GEOGRAPHY, padAngleFor, PLACED_ROCK, sculptPlanet, type Geography } from './planet';
 import type { SystemRecipe } from '../sector/sector';
 import { clamp } from '../engine/math';
+import { makeMarket } from '../sim/market';
 
 const PAL = {
   ember: { low: [0.5, 0.16, 0.08], mid: [0.5, 0.16, 0.08], high: [0.5, 0.16, 0.08], glow: [1.55, 0.5, 0.28] },
@@ -103,6 +104,8 @@ function emberSystem(r: SystemRecipe): World {
   port.upgrades = ['tank', 'cargo', 'strafe', 'struts', 'scatter', 'sensors'];
   port.fuelPrice = 3;
   port.orePrice = 18; port.salvagePrice = 70;
+  // the port sits over a mine: ore is cheap and plentiful here, parts are dear
+  port.market = makeMarket({ ore: { base: 18, stock: 60, buys: true, sells: true }, salvage: { base: 70, stock: 8 } });
   w.respawnStation = port;
 
   // ---------------- a thin belt between the rock and ice worlds
